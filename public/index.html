@@ -1,0 +1,221 @@
+<title>Ticket Terminal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cabin:wght@600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<link rel="stylesheet" href="/static/styles.css">
+
+<div class="wrap">
+  <div class="gridview" id="gridview">
+    <div class="station-strip">
+      <img src="/static/assets/train-station.png" alt="Pixel-art Japanese commuter train arriving at a warmly lit station at night" width="2172" height="724" fetchpriority="high">
+    </div>
+    <div class="titleblock">
+      <div>
+        <h1>Ticket Terminal</h1>
+        <div class="sub">Tickets are assigned to meta-categories (lanes, below) which double as the knowledge index (tiles, further down) &mdash; click either a lane header or a tile to read the actual SKILL.md / CLAUDE.md / memory files for that category.</div>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="swatch covered"></span>Covered</div>
+        <div class="legend-item"><span class="swatch partial"></span>Partial / open gaps</div>
+        <div class="legend-item"><span class="swatch gap"></span>No runbook yet</div>
+      </div>
+    </div>
+
+    <div class="categorynotice" id="categoryNotice" hidden></div>
+    <div class="refreshbar">
+      <span class="workspacewrap" id="workspaceWrap" hidden>
+        <select id="workspaceSel" title="Which workspace this board is showing — workspaces are switched, never merged" aria-label="Workspace"></select>
+      </span>
+      <button type="button" class="refreshbtn" id="refreshBtn">⟳ Refresh</button>
+      <span class="refreshtime" id="refreshTime">loading…</span>
+      <button type="button" class="refreshbtn" id="memoryGraphBtn" style="margin-left:auto;">🕸 Memory graph</button>
+      <button type="button" class="refreshbtn" id="insightsBtn">📊 Insights</button>
+      <button type="button" class="refreshbtn" id="settingsBtn">⚙ Settings</button>
+    </div>
+
+    <details class="sectiondetails" id="ticketsSection" open>
+      <summary class="sectionhead">
+        <span>Tickets — by meta-category</span>
+        <span class="sectionhelp" tabindex="0" aria-label="About tracker scan" aria-describedby="jiraScanTooltip">i
+          <span class="sectionhelptext" id="jiraScanTooltip" role="tooltip">
+            <strong>Tracker scan</strong>
+            New tickets from the connected trackers (Jira project, Notion database) are filed into suggested categories with a NEW marker. Category, priority, and team can be edited here. Content tags are generated from the ticket title and description whenever changed content is refreshed.
+          </span>
+        </span>
+      </summary>
+      <div class="searchwrap">
+        <input type="search" id="ticketSearch" placeholder="Search tickets, person, team…">
+        <select id="filterPersonSel"><option value="">All people</option></select>
+        <span class="sprintwrap" id="sprintWrap" hidden>
+          <select id="sprintSel" title="Scope the board to one sprint, the way your tracker's sprint view does"></select>
+          <span class="sprintnote" id="sprintNote"></span>
+        </span>
+        <button type="button" class="viewbtn" id="inProgressBtn" style="margin-left:auto;border-radius:100px;">In progress</button>
+        <div class="viewtoggle">
+          <button type="button" class="viewbtn" id="viewGroupedBtn">Grouped</button>
+          <button type="button" class="viewbtn" id="viewFlatBtn">All tickets</button>
+        </div>
+        <span class="searchhint" id="searchHint"></span>
+      </div>
+      <div class="teamfilterwrap">
+        <span class="reflabel">Teams shown</span>
+        <div class="teamfilterrow" id="teamFilterRow"></div>
+        <button type="button" class="filterreset" id="teamFilterReset">Show all</button>
+        <button type="button" class="filterreset" id="teamFilterClear">Deselect all</button>
+      </div>
+      <div class="statusfilterwrap">
+        <span class="reflabel">Statuses shown</span>
+        <div class="statusfilterrow" id="statusFilterRow"></div>
+        <button type="button" class="filterreset" id="statusFilterReset">Show all</button>
+        <button type="button" class="filterreset" id="statusFilterClear">Deselect all</button>
+      </div>
+      <div class="categorytoolbar" id="categoryToolbar">
+        <div class="viewtoggle categorytoggle">
+          <button type="button" class="viewbtn" id="toggleCategoriesBtn">Collapse all</button>
+          <button type="button" class="viewbtn" id="manageCategoriesBtn">Manage categories</button>
+        </div>
+        <span class="searchhint">Drag a category handle to reorder</span>
+        <span class="searchhint" id="categoryOrderAnnouncement" aria-live="polite"></span>
+      </div>
+      <div class="lanes" id="lanes"></div>
+      <div class="lane" id="allTicketsView" hidden>
+        <div class="lanehead" style="cursor:default;">
+          <h3>All tickets</h3>
+          <span class="lanecount" id="allTicketsCount">0 tickets</span>
+          <select id="flatSortSel" class="lanesort" style="margin-left:auto;">
+            <option value="status">Sort: status</option>
+            <option value="date">Sort: open date (newest)</option>
+            <option value="priority">Sort: priority</option>
+          </select>
+        </div>
+        <div class="lanebody" id="allTicketsList"></div>
+      </div>
+      <div class="lane" id="searchResults" hidden>
+        <div class="lanehead" style="cursor:default;">
+          <h3>Search results</h3>
+          <span class="lanecount" id="searchCount">0 tickets</span>
+        </div>
+        <div class="lanebody" id="searchList"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" id="skillsSection" open>
+      <summary class="sectionhead">Skills &amp; knowledge</summary>
+      <div class="grid" id="grid"></div>
+    </details>
+
+    <div class="foot" id="dbstate">connecting to ticket tracker&hellip;</div>
+  </div>
+
+  <div class="detailview hidden" id="detailview"></div>
+
+  <div class="memoryview hidden" id="memoryview">
+    <button type="button" class="backlink" id="memoryBackBtn">‹ Back to chart</button>
+    <div class="detailhead">
+      <h1>Memory graph</h1>
+      <span class="sub" id="memoryGraphSub"></span>
+    </div>
+    <div class="memorycontrols" id="memoryControls"></div>
+    <div class="memorywrap">
+      <div class="memorycanvas" id="memoryCanvas"></div>
+      <div class="memorypanel" id="memoryPanel">
+        <div class="empty-state">Click a node to view or edit it.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="insightsview hidden" id="insightsview">
+    <button type="button" class="backlink" id="insightsBackBtn">‹ Back to chart</button>
+    <div class="detailhead">
+      <h1>LLM usage insights</h1>
+      <button type="button" class="refreshbtn" id="insightsRefreshBtn">⟳ Refresh</button>
+    </div>
+    <div class="detailnote">Cost, vendor/model comparison, and caching — computed directly from your session history. No LLM call happens on this page.</div>
+    <div class="insightsbody" id="insightsBody"></div>
+  </div>
+
+  <div class="terminalpageview hidden" id="terminalpageview">
+    <button type="button" class="backlink" id="terminalPageBackBtn">‹ Back to chart</button>
+    <div class="detailhead">
+      <h1 id="terminalPageTitle">Terminal</h1>
+    </div>
+    <div class="termhost" id="terminalPageHost"></div>
+  </div>
+
+  <div class="settingsview hidden" id="settingsview">
+    <button type="button" class="backlink" id="settingsBackBtn">‹ Back to chart</button>
+    <div class="detailhead">
+      <h1>Settings</h1>
+      <span class="sub">Categories, people and teams, the Jira and Notion connections, and the memory-graph knowledge source — editable here, changes apply immediately, no restart needed.</span>
+    </div>
+
+    <section class="categoryworkbench" id="categoryWorkbench" aria-label="Category setup and review"></section>
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Edit categories <span class="sectioncount" id="settingsCatCount"></span></summary>
+      <div class="lane">
+        <div class="lanebody" id="settingsCategoriesList"></div>
+        <div class="settingsactions">
+          <button type="button" class="copybtn" id="settingsAddCategoryBtn">+ Add category</button>
+          <button type="button" class="refreshbtn" id="settingsSaveCategoriesBtn">Save categories</button>
+          <span class="settingsmsg" id="settingsCategoriesMsg"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" id="peopleSection" open>
+      <summary class="sectionhead">People &amp; teams <span class="sectioncount" id="peopleCount"></span></summary>
+      <div class="lane peoplepanel">
+        <div class="lanebody">
+          <div class="reflabel">Team list</div>
+          <div class="chiprow" id="teamChips"></div>
+          <form class="addteam" id="addTeamForm">
+            <input type="text" id="newTeamInput" placeholder="Add a team…" maxlength="24">
+            <button type="submit">Add</button>
+          </form>
+        </div>
+        <div class="lanebody" id="peopleList"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" id="workspacesSection" open>
+      <summary class="sectionhead">Workspaces</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsWorkspacesForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Jira connection</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsJiraForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Notion connection</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsNotionForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Memory source</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsMemoryForm"></div>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- These stay classic (non-module) scripts, in this order, before the one
+     type="module" tag below: classic scripts run synchronously in document
+     order, and a module script is deferred-by-default, so it's guaranteed to
+     run after all of these — board.js's modules read Terminal/FitAddon/vis/
+     window.openTicketTerminal as bare globals these define. Don't add `async`
+     to any of these, and don't convert terminal.js to a module too, without
+     re-checking that guarantee still holds. -->
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="/static/terminal.js"></script>
+<script type="module" src="/static/board.js"></script>

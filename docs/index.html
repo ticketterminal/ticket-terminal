@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ticket Terminal</title>
+<meta name="description" content="A free, open-source ticket board where every ticket opens a real Claude or Codex session, backed by one shared memory that gets smarter with every ticket.">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* ---- design tokens, taken from public/styles.css: same palette as the app itself ---- */
+  :root{
+    --bg:#eef1f3;
+    --surface:#ffffff;
+    --surface-2:#e3e8eb;
+    --ink:#142430;
+    --ink-muted:#5b6b74;
+    --line:#c7d0d4;
+    --accent:#b5792f;
+    --accent-ink:#ffffff;
+    --covered:#2f7a5f;
+    --covered-bg:#e4f0ea;
+    --memory:#7A6FB0;
+    --memory-bg:#efedf7;
+    --shadow: 0 1px 2px rgba(20,36,48,.06), 0 4px 12px rgba(20,36,48,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0d1b24; --surface:#142832; --surface-2:#1b3540; --ink:#dce8ea; --ink-muted:#8aa0a8;
+      --line:#24424f; --accent:#d9a54f; --accent-ink:#0d1b24;
+      --covered:#5fbf8f; --covered-bg:#173229; --memory:#a79bdb; --memory-bg:#26213a;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0d1b24; --surface:#142832; --surface-2:#1b3540; --ink:#dce8ea; --ink-muted:#8aa0a8;
+    --line:#24424f; --accent:#d9a54f; --accent-ink:#0d1b24;
+    --covered:#5fbf8f; --covered-bg:#173229; --memory:#a79bdb; --memory-bg:#26213a;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box;}
+  html{background:var(--bg);}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Public Sans",-apple-system,sans-serif;font-size:15px;line-height:1.6;}
+  a{color:inherit;}
+  h1,h2,h3{margin:0;text-wrap:balance;font-family:"Big Shoulders",sans-serif;}
+  p{margin:0;}
+  .wrap{max-width:1160px;margin:0 auto;padding-inline:20px;}
+
+  /* ---- nav ---- */
+  nav{border-bottom:1px solid var(--line);background:var(--surface);}
+  .navrow{max-width:1160px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;}
+  .logo{font-weight:800;font-size:18px;text-transform:uppercase;letter-spacing:.02em;}
+  .navlinks{display:flex;gap:26px;font-size:13.5px;color:var(--ink-muted);font-weight:500;font-family:"Public Sans",sans-serif;}
+  .navlinks a:hover{color:var(--accent);}
+  .navcta{display:flex;align-items:center;gap:10px;}
+  .navlicense{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-muted);border:1px solid var(--line);border-radius:100px;padding:5px 12px;}
+
+  /* ---- buttons ---- */
+  .btn{font-family:"Public Sans",sans-serif;font-weight:600;font-size:13.5px;padding:9px 18px;border:1px solid var(--line);border-radius:100px;background:var(--surface);color:var(--ink);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:7px;white-space:nowrap;transition:border-color .12s ease,background .12s ease,color .12s ease;}
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn-primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+  .btn-primary:hover{opacity:.88;color:var(--accent-ink);}
+  .btn svg{width:14px;height:14px;flex:none;}
+
+  /* ---- hero: the real station-strip + titleblock pattern ---- */
+  .station-strip{width:100%;height:clamp(200px,32vw,360px);overflow:hidden;background:#102b46;}
+  .station-strip img{display:block;width:100%;height:100%;object-fit:cover;object-position:center 62%;image-rendering:pixelated;}
+  .titleblockwrap{background:var(--surface);border-bottom:1px solid var(--line);}
+  .titleblock{max-width:1160px;margin:0 auto;padding:34px 20px 30px;}
+  .kicker{font-family:"IBM Plex Mono",monospace;font-size:11.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent);font-weight:600;}
+  .titleblock h1{font-weight:800;font-size:clamp(30px,4.6vw,48px);text-transform:uppercase;letter-spacing:.02em;margin-top:10px;}
+  .titleblock .sub{color:var(--ink-muted);font-size:15.5px;max-width:600px;margin-top:14px;}
+  .herobtns{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap;}
+
+  /* ---- trust bar ---- */
+  .trustbar{background:var(--surface-2);border-bottom:1px solid var(--line);}
+  .trustrow{max-width:1160px;margin:0 auto;padding:22px 20px;display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
+  .trustitem{display:flex;gap:11px;align-items:flex-start;}
+  .trustitem svg{width:18px;height:18px;flex:none;margin-top:2px;stroke:var(--covered);}
+  .trustitem strong{display:block;font-family:"Public Sans",sans-serif;font-size:13.5px;font-weight:700;}
+  .trustitem span{display:block;color:var(--ink-muted);font-size:12.5px;margin-top:2px;}
+
+  section{padding-block:72px;}
+  .sectionhead{max-width:640px;margin-bottom:34px;}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--accent);font-weight:600;}
+  .sectionhead h2{font-weight:800;font-size:clamp(22px,3.2vw,30px);text-transform:uppercase;letter-spacing:.01em;margin-top:10px;}
+  .sectionhead p{color:var(--ink-muted);margin-top:12px;font-size:14.5px;max-width:60ch;font-family:"Public Sans",sans-serif;}
+
+  /* ---- feature cards ---- */
+  .featuregrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:22px 22px 24px;}
+  .fico{width:36px;height:36px;border-radius:8px;background:var(--covered-bg);display:flex;align-items:center;justify-content:center;margin-bottom:14px;}
+  .fico svg{width:18px;height:18px;stroke:var(--covered);}
+  .cardtag{font-family:"IBM Plex Mono",monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);font-weight:600;}
+  .card h3{font-weight:700;font-size:17px;letter-spacing:.005em;margin-top:5px;font-family:"Public Sans",sans-serif;}
+  .card p.note{color:var(--ink-muted);font-size:13.5px;margin-top:9px;font-family:"Public Sans",sans-serif;}
+
+  /* ---- steps ---- */
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0;}
+  .step{padding:0 20px;}
+  .step:not(:first-child){border-left:1px dashed var(--line);}
+  .stepnum{font-family:"IBM Plex Mono",monospace;color:var(--accent);font-size:11px;font-weight:600;letter-spacing:.05em;}
+  .step h3{font-weight:700;font-size:16px;margin-top:10px;font-family:"Public Sans",sans-serif;}
+  .step p{color:var(--ink-muted);font-size:13.5px;margin-top:8px;font-family:"Public Sans",sans-serif;}
+
+  /* ---- cost transparency ---- */
+  .pricegrid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;}
+  .pricecard{background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:24px 26px;border-left:4px solid var(--stripe);}
+  .pricecard .providerrow{display:flex;align-items:center;justify-content:space-between;}
+  .providername{font-weight:700;font-size:15px;font-family:"Public Sans",sans-serif;}
+  .exampletag{font-family:"IBM Plex Mono",monospace;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-muted);border:1px dashed var(--line);border-radius:100px;padding:3px 10px;}
+  .pricefigure{font-weight:800;font-size:38px;margin-top:14px;font-variant-numeric:tabular-nums;}
+  .pricemeta{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-muted);margin-top:6px;}
+  .pricenote{margin-top:26px;color:var(--ink-muted);font-size:13px;max-width:70ch;font-family:"Public Sans",sans-serif;}
+
+  /* ---- memory graph ---- */
+  .memgrid{display:grid;grid-template-columns:.85fr 1.15fr;gap:36px;align-items:center;}
+  .memtext h2{font-weight:800;font-size:clamp(22px,3.2vw,28px);text-transform:uppercase;margin-top:10px;}
+  .memtext p{color:var(--ink-muted);font-size:14.5px;margin-top:12px;font-family:"Public Sans",sans-serif;}
+  .memtext p strong{color:var(--ink);}
+  .memgraphcard{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);height:380px;overflow:hidden;}
+  canvas{display:block;width:100%;height:100%;}
+
+  /* ---- quickstart ---- */
+  .doccard{background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);overflow:hidden;}
+  .dochead{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--surface-2);font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-muted);}
+  .docbody{padding:16px 18px;}
+  .docbody pre{background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin:0;overflow-x:auto;font-family:"IBM Plex Mono",monospace;font-size:13px;}
+  .docbody pre .p{color:var(--accent);}
+  .qs-cap{color:var(--ink-muted);font-size:13px;margin-top:12px;font-family:"IBM Plex Mono",monospace;}
+  .qs-more{margin-top:16px;font-size:13.5px;color:var(--ink-muted);font-family:"Public Sans",sans-serif;}
+  .qs-more a{color:var(--accent);}
+
+  .foot{margin-top:8px;padding-block:30px;text-align:center;color:var(--ink-muted);font-size:12px;font-family:"IBM Plex Mono",monospace;border-top:1px solid var(--line);}
+  .foot a{color:var(--accent);}
+
+  /* ---- live board widget: a self-contained dark "app chrome" demo, always dark
+     regardless of page theme (same reasoning as the terminal preview above) ---- */
+  .boardwidget{
+    --wk-surface:#142832; --wk-surface2:#1b3540; --wk-ink:#dce8ea; --wk-inkmuted:#8aa0a8;
+    --wk-line:#24424f; --wk-accent:#d9a54f; --wk-covered:#5fbf8f; --wk-partial:#d9a54f;
+    --wk-gap:#e2694a; --wk-progress:#71c3df; --wk-approval:#f2a65a;
+    width:100%;
+  }
+  .widgetlane{background:var(--wk-surface);border:1px solid var(--wk-line);border-radius:8px;box-shadow:0 10px 34px rgba(0,0,0,.32);overflow:hidden;border-left:4px solid var(--wk-partial);}
+  .widgetlanehead{display:flex;align-items:center;gap:11px;padding:13px 18px;background:var(--wk-surface2);border-bottom:1px solid var(--wk-line);flex-wrap:wrap;}
+  .widgetdrag{color:var(--wk-inkmuted);font-size:13px;letter-spacing:-1px;}
+  .widgetlanehead h3{font-weight:700;font-size:15px;color:var(--wk-ink);flex:none;text-transform:none;}
+  .widgetpill{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 9px;border-radius:100px;flex:none;transition:color .2s ease,background .2s ease;}
+  .widgetpill.covered{color:var(--wk-covered);background:rgba(95,191,143,.14);}
+  .widgetpill.partial{color:var(--wk-partial);background:rgba(217,165,79,.14);}
+  .widgetpill.gap{color:var(--wk-gap);background:rgba(226,105,74,.14);}
+
+  .boardtabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
+  .boardtab{font-family:"IBM Plex Mono",monospace;font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:7px 16px;border-radius:100px;border:1px solid var(--wk-line);background:var(--wk-surface);color:var(--wk-inkmuted);cursor:pointer;transition:background .15s ease,color .15s ease,border-color .15s ease;}
+  .boardtab:hover{border-color:var(--wk-accent);color:var(--wk-ink);}
+  .boardtab.active{background:var(--wk-accent);color:#0d1b24;border-color:var(--wk-accent);}
+  .widgetcount{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--wk-inkmuted);flex:none;}
+  .widgetsort{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--wk-inkmuted);border:1px solid var(--wk-line);border-radius:100px;padding:3px 11px;flex:none;}
+  .widgetviewfiles{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--wk-accent);text-transform:uppercase;letter-spacing:.04em;flex:none;}
+  .widgetbody{position:relative;padding:2px 18px 8px;overflow:hidden;min-height:272px;}
+  .widgetrow{position:relative;border-top:1px solid var(--wk-line);padding:11px 0;background:var(--wk-surface);}
+  .widgetrow:first-child{border-top:none;}
+  .widgetrow.empty{opacity:0;pointer-events:none;}
+  .wrowtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
+  .wtitle{font-size:13px;color:var(--wk-ink);font-weight:600;font-family:"Public Sans",sans-serif;}
+  .wopendate{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--wk-inkmuted);flex:none;}
+  .wbadgerow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:7px;}
+  .wstatus{font-family:"IBM Plex Mono",monospace;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:3px 9px;border-radius:100px;border:1px solid currentColor;transition:color .35s ease,border-color .35s ease;}
+  .wprio{font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;}
+  .wteam{font-family:"IBM Plex Mono",monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--wk-inkmuted);border:1px dashed var(--wk-line);border-radius:100px;padding:2px 9px;}
+  .wtagrow{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;}
+  .wtag{font-family:"IBM Plex Mono",monospace;font-size:10px;background:var(--wk-surface2);border:1px solid var(--wk-line);border-radius:100px;padding:2px 8px;color:var(--wk-ink);}
+  .wtag::before{content:"#";color:var(--wk-accent);margin-right:1px;}
+
+  /* ---- pixel-train status indicator: the exact component from public/styles.css
+     (.trainstatus), same assets, same frame->position mapping — inline with the other
+     badges, same place the real app puts it, not flushed to the row's far edge ---- */
+  .wtrainstatus{--train-x:-28px;--signal-color:#36505b;position:relative;width:72px;height:22px;flex:none;overflow:hidden;background:#142832 url('assets/train-status-station.png') center/72px 24px no-repeat;image-rendering:pixelated;border-radius:3px;}
+  .wtrainstatus::before{content:"";position:absolute;z-index:2;left:4px;top:13px;width:1px;height:1px;background:var(--signal-color);transition:background-color 200ms linear;}
+  .wtrainstatus::after{content:"";position:absolute;left:0;top:3px;width:36px;height:12px;background:url('assets/train-status-train.png') center/36px 12px no-repeat;transform:translateX(var(--train-x));transition:transform 240ms ease-out;}
+  .wtrainstatus[data-frame="0"]{--train-x:-28px;--signal-color:#e2694a;}
+  .wtrainstatus[data-frame="1"]{--train-x:-10px;--signal-color:#5fbf8f;}
+  .wtrainstatus[data-frame="2"]{--train-x:18px;--signal-color:#5fbf8f;}
+  .wtrainstatus[data-frame="3"]{--train-x:38px;--signal-color:#d9a54f;}
+  .wtrainstatus[data-frame="4"]{--train-x:72px;}
+
+  /* cost is shown on every row, always — not just while an agent is actively on it,
+     to make clear it's tracked continuously, not only during a visible work burst */
+  .wcost{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;color:var(--wk-covered);font-variant-numeric:tabular-nums;white-space:nowrap;flex:none;}
+
+  /* ---- expand panel: the actual embedded terminal opening on the ticket ---- */
+  .wexpand{max-height:0;overflow:hidden;transition:max-height .35s ease;}
+  .widgetrow.expanded .wexpand{max-height:98px;margin-top:9px;}
+  .wterm{border-top:1px dashed var(--wk-line);padding-top:9px;}
+  .wtermbar{display:flex;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--wk-inkmuted);margin-bottom:6px;}
+  .wtermdot{width:6px;height:6px;border-radius:50%;background:var(--wk-progress);animation:wpulse 1.1s ease-in-out infinite;}
+  @media (prefers-reduced-motion:reduce){.wtermdot{animation:none;}}
+  @keyframes wpulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  .wtermbody{background:#0a1620;border:1px solid var(--wk-line);border-radius:5px;padding:7px 10px;font-family:"IBM Plex Mono",monospace;font-size:11px;line-height:1.55;min-height:48px;}
+  .wtermline{color:var(--wk-inkmuted);min-height:1.55em;white-space:pre-wrap;}
+  .wtermline .p{color:var(--wk-accent);}
+  .wtermline .ok{color:var(--wk-covered);}
+  .wtermcursor{display:inline-block;width:6px;height:11px;background:var(--wk-accent);vertical-align:-1px;animation:wblink 1s steps(2) infinite;}
+  @media (prefers-reduced-motion:reduce){.wtermcursor{animation:none;}}
+  @keyframes wblink{50%{opacity:0;}}
+
+  .widgetrow.entering{animation:wenter .6s cubic-bezier(.2,.8,.2,1) both;}
+  @keyframes wenter{ from{ transform:translateX(-130%); opacity:0; } to{ transform:translateX(0); opacity:1; } }
+
+  .widgetrow.departing{z-index:2;animation:wdepart .95s cubic-bezier(.55,.02,.82,.24) forwards;}
+  @keyframes wdepart{
+    0%{ transform:translateX(0); opacity:1; filter:blur(0); }
+    18%{ transform:translateX(6px); }
+    36%{ transform:translateX(26px); }
+    100%{ transform:translateX(820px); opacity:.08; filter:blur(2px); }
+  }
+  .widgetrow.departing::after{
+    content:"";position:absolute;right:100%;top:50%;width:70px;height:2px;
+    background:linear-gradient(90deg,transparent,var(--wk-accent));opacity:0;
+    animation:wstreak .95s ease-in forwards;
+  }
+  @keyframes wstreak{
+    0%,20%{opacity:0;transform:scaleX(.15);}
+    65%{opacity:.7;transform:scaleX(1);}
+    100%{opacity:0;transform:scaleX(2.4);}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .widgetrow.entering,.widgetrow.departing,.widgetrow.departing::after{animation:none;}
+  }
+
+  @media (max-width:860px){
+    .featuregrid{grid-template-columns:repeat(2,1fr);}
+    .pricegrid,.memgrid{grid-template-columns:1fr;}
+    .trustrow{grid-template-columns:1fr;gap:16px;}
+    .steps{grid-template-columns:1fr;gap:20px;}
+    .step:not(:first-child){border-left:none;border-top:1px dashed var(--line);padding-top:18px;}
+    .navlinks{display:none;}
+  }
+  @media (max-width:560px){
+    .featuregrid{grid-template-columns:1fr;}
+    section{padding-block:48px;}
+    .titleblock{padding-block:26px 26px;}
+    .widgetsort{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="navrow">
+    <div class="logo">Ticket Terminal</div>
+    <div class="navlinks">
+      <a href="#features">Features</a>
+      <a href="#pricing">Cost</a>
+      <a href="#memory">Memory</a>
+      <a href="#quickstart">Quickstart</a>
+    </div>
+    <div class="navcta">
+      <span class="navlicense">Apache 2.0 · free</span>
+      <a class="btn" href="https://github.com/ticketterminal/ticket-terminal" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="station-strip">
+    <img src="assets/train-station.png" alt="Pixel-art commuter train arriving at a warmly lit night station" width="2172" height="724" fetchpriority="high">
+  </div>
+  <div class="titleblockwrap">
+    <div class="titleblock">
+      <span class="kicker">Open source · local-first</span>
+      <h1>Ticket Terminal</h1>
+      <p class="sub">The ticket board where AI agents actually do the work: real Claude and
+        Codex sessions on every ticket, backed by one shared memory that gets smarter with
+        each one that closes. Free, open source, and built for every engineering role — not
+        just one.</p>
+      <div class="herobtns">
+        <a class="btn btn-primary" href="https://github.com/ticketterminal/ticket-terminal" target="_blank" rel="noopener">View on GitHub</a>
+        <a class="btn" href="#quickstart">Read the quickstart</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="trustbar">
+  <div class="trustrow">
+    <div class="trustitem">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <div><strong>Apache 2.0, always</strong><span>Free forever. Fork it, self-host it, ship it — no license fees, no seat costs.</span></div>
+    </div>
+    <div class="trustitem">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <div><strong>Your machine, your keys</strong><span>Runs locally against your own credentials — never a hosted black box.</span></div>
+    </div>
+    <div class="trustitem">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <div><strong>Real cost, per ticket</strong><span>See exactly what Claude and Codex spent — actual token pricing, not a guess.</span></div>
+    </div>
+  </div>
+</div>
+
+<section id="board-demo" class="wrap">
+  <div class="sectionhead">
+    <span class="eyebrow">// the board</span>
+    <h2>Tickets move like trains through the station</h2>
+    <p>New work arrives, you open a terminal with your selected LLM — or run it fully
+      agentic — and finished tickets roll out. Exactly how it moves in the real app.</p>
+  </div>
+  <div class="boardwidget">
+    <div class="boardtabs" role="tablist" aria-label="Engineering role">
+      <button type="button" class="boardtab" data-tab="frontend" role="tab">Frontend</button>
+      <button type="button" class="boardtab" data-tab="backend" role="tab">Backend</button>
+      <button type="button" class="boardtab active" data-tab="devops" role="tab">DevOps</button>
+      <button type="button" class="boardtab" data-tab="algo" role="tab">Algo</button>
+    </div>
+    <div class="widgetlane">
+      <div class="widgetlanehead">
+        <span class="widgetdrag" aria-hidden="true">⠿</span>
+        <h3 id="wLaneTitle">Access and Provisioning</h3>
+        <span class="widgetpill partial" id="wLanePill">PARTIAL</span>
+        <span class="widgetcount" id="wLaneCount">12 tickets</span>
+        <span class="widgetsort">STATUS ▾</span>
+        <span class="widgetviewfiles">VIEW FILES →</span>
+      </div>
+      <div class="widgetbody" id="widgetBody" aria-hidden="true"></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="wrap">
+  <div class="sectionhead">
+    <span class="eyebrow">// features</span>
+    <h2>Not a chat window bolted onto a card</h2>
+    <p>Every piece is built around one idea: the agent working your ticket needs a real
+      place to work, and a real memory to work from.</p>
+  </div>
+  <div class="featuregrid">
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="M8 10l3 2-3 2M13 14h3"/></svg></div>
+      <span class="cardtag">Agent</span>
+      <h3>Real embedded terminals</h3>
+      <p class="note">An actual Claude or Codex session per ticket — resumable across visits, with a permanent transcript.</p>
+    </div>
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l7-.3M7.5 8.3L11 16M16.5 8.3L13 16"/></svg></div>
+      <span class="cardtag">Memory</span>
+      <h3>Vendor-neutral knowledge</h3>
+      <p class="note">Architecture notes and runbooks as markdown + diagrams any LLM can read and write — never locked to one vendor.</p>
+    </div>
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M4 8h11M4 8l3-3M4 8l3 3M20 16H9M20 16l-3-3M20 16l-3 3"/></svg></div>
+      <span class="cardtag">Sync</span>
+      <h3>Meets your tracker</h3>
+      <p class="note">Live sync with Jira today, Notion on the way. It wires an agent into your tickets — it doesn't ask you to move them.</p>
+    </div>
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></div>
+      <span class="cardtag">Team</span>
+      <h3>Built for every role</h3>
+      <p class="note">Ten engineering-role starter presets — backend, frontend, mobile, data, QA, devops. Categories are configuration, not code.</p>
+    </div>
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="1.5"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+      <span class="cardtag">Privacy</span>
+      <h3>Local-first, on purpose</h3>
+      <p class="note">No hosted black box holding your keys, your git history, or your agent's transcripts.</p>
+    </div>
+    <div class="card">
+      <div class="fico"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="4.5"/></svg></div>
+      <span class="cardtag">License</span>
+      <h3>Apache 2.0, no strings</h3>
+      <p class="note">Free to use, modify, and self-host commercially. No usage tiers, no gated features.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="sectionhead">
+    <span class="eyebrow">// how it works</span>
+    <h2>Three steps, on every ticket</h2>
+  </div>
+  <div class="steps">
+    <div class="step">
+      <div class="stepnum">01 · OPEN</div>
+      <h3>A ticket becomes a real terminal</h3>
+      <p>An actual Claude or Codex session starts, scoped to that one ticket, picking up exactly where it left off.</p>
+    </div>
+    <div class="step">
+      <div class="stepnum">02 · WORK</div>
+      <h3>The agent works it, memory in hand</h3>
+      <p>It reads the team's shared knowledge base first — architecture, runbooks, past decisions — before touching anything.</p>
+    </div>
+    <div class="step">
+      <div class="stepnum">03 · LEARN</div>
+      <h3>What it learns becomes the memory</h3>
+      <p>New context is written back as plain markdown and diagrams. The next ticket starts smarter.</p>
+    </div>
+  </div>
+</section>
+
+<section id="pricing" class="wrap">
+  <div class="sectionhead">
+    <span class="eyebrow">// cost transparency</span>
+    <h2>Know exactly what your agents cost</h2>
+    <p>Every session shells out to real, maintained pricing logic instead of guessing — you see
+      actual token cost, per provider, per ticket. No flat subscription number standing in for
+      the truth.</p>
+  </div>
+  <div class="pricegrid">
+    <div class="pricecard" style="--stripe:var(--covered);">
+      <div class="providerrow"><span class="providername">Claude</span><span class="exampletag">Example ticket</span></div>
+      <div class="pricefigure">$0.38</div>
+      <div class="pricemeta">14 tool calls · claude-sonnet-5</div>
+    </div>
+    <div class="pricecard" style="--stripe:var(--memory);">
+      <div class="providerrow"><span class="providername">Codex</span><span class="exampletag">Example ticket</span></div>
+      <div class="pricefigure">$0.51</div>
+      <div class="pricemeta">9 tool calls · gpt-5.1-codex</div>
+    </div>
+  </div>
+  <p class="pricenote">Hover any ticket's cost badge in the app for the exact breakdown — no
+    separate billing dashboard to reconcile against. Figures are real, token-based cost
+    estimates, not subscription invoices.</p>
+</section>
+
+<section id="memory" class="wrap">
+  <div class="memgrid">
+    <div class="memtext">
+      <span class="eyebrow">// shared memory</span>
+      <h2>One knowledge base.<br>Every agent can read it.</h2>
+      <p>Each note is <strong>plain markdown</strong>, with an optional diagram for anything
+        that's really a workflow or an architecture — editable, and git-diffable like everything
+        else in the repo.</p>
+      <p>It's the compounding asset: every ticket an agent closes leaves the next one, and the
+        next agent, a little smarter — never locked to one vendor's session format.</p>
+    </div>
+    <div class="memgraphcard"><canvas id="memcanvas"></canvas></div>
+  </div>
+</section>
+
+<section id="quickstart" class="wrap">
+  <div class="sectionhead">
+    <span class="eyebrow">// quickstart</span>
+    <h2>Running in about a minute</h2>
+    <p>$0 to install, $0 in license fees — you only ever pay your own Claude/Codex usage.</p>
+  </div>
+  <div class="doccard">
+    <div class="dochead">zsh</div>
+    <div class="docbody"><pre><span class="p">$</span> python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+<span class="p">$</span> pip install -r requirements.txt
+<span class="p">$</span> python server/main.py</pre></div>
+  </div>
+  <p class="qs-cap">→ open http://127.0.0.1:4173 — no build step, no separate frontend process.</p>
+  <p class="qs-more">Full setup, Jira sync, and configuration in the <a href="https://github.com/ticketterminal/ticket-terminal#readme" target="_blank" rel="noopener">README ↗</a></p>
+</section>
+
+<div class="foot">TICKET TERMINAL · Apache 2.0 · <a href="https://github.com/ticketterminal/ticket-terminal" target="_blank" rel="noopener">github.com/ticketterminal/ticket-terminal</a></div>
+
+<script>
+(function(){
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+    (document.documentElement.getAttribute('data-theme') !== 'light' &&
+     window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  var labelColor = isDark ? 'rgba(220,232,234,0.85)' : 'rgba(20,36,48,0.72)';
+
+  // ---- memory graph canvas: labeled, layered, using the app's accent + memory-purple tokens ----
+  var canvas = document.getElementById('memcanvas');
+  var ctx = canvas.getContext('2d');
+  var nodes = [], edges = [];
+  var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var labels = ["payments-arch","auth-flow","onboarding","ios-ci","refund-policy","search-index","checkout-flow","alerting"];
+
+  function seedGraph(){
+    var n = 22;
+    nodes = [];
+    for (var i = 0; i < n; i++){
+      var labeled = i < labels.length;
+      nodes.push({
+        x: Math.random()*W, y: Math.random()*H,
+        vx: (Math.random()-0.5)*0.12, vy: (Math.random()-0.5)*0.12,
+        r: labeled ? 5 + Math.random()*2 : 2.5 + Math.random()*2,
+        label: labeled ? labels[i] : null
+      });
+    }
+    edges = [];
+    for (var a = 0; a < n; a++){
+      var links = 1 + Math.floor(Math.random()*2);
+      for (var k = 0; k < links; k++){
+        var b = Math.floor(Math.random()*n);
+        if (b !== a) edges.push([a,b]);
+      }
+    }
+  }
+
+  function resize(){
+    var rect = canvas.parentElement.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    canvas.width = W*DPR; canvas.height = H*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    seedGraph();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.lineWidth = 1;
+    edges.forEach(function(e){
+      var a = nodes[e[0]], b = nodes[e[1]];
+      ctx.strokeStyle = 'rgba(122,111,176,0.24)';
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    });
+    nodes.forEach(function(nd){
+      ctx.beginPath();
+      ctx.arc(nd.x, nd.y, nd.r+5, 0, Math.PI*2);
+      ctx.fillStyle = nd.label ? 'rgba(122,111,176,0.14)' : 'rgba(181,121,47,0.10)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(nd.x, nd.y, nd.r, 0, Math.PI*2);
+      ctx.fillStyle = nd.label ? 'rgba(122,111,176,0.95)' : 'rgba(181,121,47,0.85)';
+      ctx.fill();
+      if (nd.label){
+        ctx.font = "500 11px 'IBM Plex Mono', monospace";
+        ctx.fillStyle = labelColor;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(nd.label, nd.x + nd.r + 7, nd.y);
+      }
+    });
+  }
+
+  function step(){
+    nodes.forEach(function(nd){
+      nd.x += nd.vx; nd.y += nd.vy;
+      if (nd.x < 10 || nd.x > W-10) nd.vx *= -1;
+      if (nd.y < 10 || nd.y > H-10) nd.vy *= -1;
+    });
+    draw();
+    if (!reduceMotion) requestAnimationFrame(step);
+  }
+
+  window.addEventListener('resize', function(){ resize(); if (reduceMotion) draw(); });
+  resize();
+  if (reduceMotion){ draw(); } else { requestAnimationFrame(step); }
+})();
+
+(function(){
+  // ---- live board widget: self-sustaining loop over a fixed pool of row "slots."
+  // Every tick performs exactly one of enter / bump-status / depart, chosen so all
+  // three keep happening indefinitely rather than one starving the others. ----
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var body = document.getElementById('widgetBody');
+  if (!body) return;
+
+  // one pool of generic tickets per role — swapped wholesale when a tab is clicked,
+  // so the demo reads as "any engineering role," not a devops-only board
+  var PROFILES = {
+    devops: {
+      idPrefix: "DEVOPS-", laneTitle: "Access and Provisioning",
+      pillLabel: "PARTIAL", pillClass: "partial", count: "12 tickets",
+      titles: [
+        "Rotate service account credentials", "Grant read-only database access",
+        "Add new hire to SSO group", "Review stale API keys",
+        "Provision VPN certificate", "Audit admin role assignments",
+        "Revoke offboarded contractor access", "Set up scoped CI deploy token"
+      ],
+      teams: ["PLATFORM", "SECURITY", "DATA TEAM", "INFRA"],
+      tagsets: [["sso","onboarding"],["iam","secrets"],["vpn","certs"],["audit","compliance"],["ci","tokens"]],
+      files: ["policies/iam.tf", "scripts/rotate_creds.py", "config/sso_groups.yaml", "access/audit_report.md"]
+    },
+    frontend: {
+      idPrefix: "WEB-", laneTitle: "Component Library & UX Debt",
+      pillLabel: "COVERED", pillClass: "covered", count: "9 tickets",
+      titles: [
+        "Fix layout shift on checkout page", "Migrate buttons to new design tokens",
+        "Add dark mode to settings panel", "Reduce bundle size on dashboard route",
+        "Fix Safari flexbox regression", "Add loading skeletons to ticket list",
+        "Upgrade to React 19", "Improve keyboard navigation on modal"
+      ],
+      teams: ["WEB", "DESIGN SYS", "GROWTH", "CORE UI"],
+      tagsets: [["css","perf"],["design-system","tokens"],["a11y","keyboard"],["react","upgrade"],["bundle-size","perf"]],
+      files: ["components/Button.tsx", "styles/tokens.css", "pages/Checkout.tsx", "hooks/useModal.ts"]
+    },
+    backend: {
+      idPrefix: "ENG-", laneTitle: "API & Data Layer",
+      pillLabel: "PARTIAL", pillClass: "partial", count: "15 tickets",
+      titles: [
+        "Refund flow double-charges on retry", "Add idempotency keys to payments API",
+        "Optimize N+1 query on orders endpoint", "Migrate user table to new schema",
+        "Add rate limiting to public API", "Fix race condition in job queue",
+        "Cache invalidation bug on profile update", "Add pagination to search endpoint"
+      ],
+      teams: ["PAYMENTS", "CORE API", "DATA", "PLATFORM"],
+      tagsets: [["payments","idempotency"],["postgres","perf"],["api","rate-limit"],["queue","concurrency"],["cache","bugfix"]],
+      files: ["services/payments.py", "models/order.py", "api/routes/search.py", "workers/job_queue.py"]
+    },
+    algo: {
+      idPrefix: "ML-", laneTitle: "Model Training & Eval",
+      pillLabel: "GAP", pillClass: "gap", count: "6 tickets",
+      titles: [
+        "Reduce false positives in fraud model", "Retrain ranking model on new features",
+        "Speed up batch inference pipeline", "Add drift monitoring to prod model",
+        "Fix label leakage in training set", "Evaluate new embedding model",
+        "A/B test recommendation ranker", "Reduce inference latency under load"
+      ],
+      teams: ["ML PLATFORM", "RESEARCH", "RANKING", "DATA SCIENCE"],
+      tagsets: [["fraud","precision"],["ranking","features"],["inference","latency"],["monitoring","drift"],["embeddings","eval"]],
+      files: ["models/fraud_v3.py", "pipelines/train_ranker.py", "eval/ab_test.py", "serving/inference.py"]
+    }
+  };
+  var activeProfile = PROFILES.devops;
+
+  var PRIO = [{label:"HIGH",color:"var(--wk-gap)"},{label:"MEDIUM",color:"var(--wk-partial)"},{label:"LOW",color:"var(--wk-inkmuted)"}];
+  var PROVIDERS = ["CLAUDE", "CODEX"];
+  var FRAMES = [
+    {label:"BACKLOG", color:"var(--wk-inkmuted)"},
+    {label:"SELECTED", color:"var(--wk-partial)"},
+    {label:"IN PROGRESS", color:"var(--wk-progress)"},
+    {label:"AWAITING APPROVAL", color:"var(--wk-approval)"},
+    {label:"DONE", color:"var(--wk-covered)"}
+  ];
+
+  var titleIdx = 0;
+  function nextTitle(){ var t = activeProfile.titles[titleIdx % activeProfile.titles.length]; titleIdx++; return t; }
+  function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+  function recentDate(){
+    var d = new Date(Date.now() - Math.floor(Math.random()*20)*86400000);
+    var p = function(n){ return String(n).padStart(2,'0'); };
+    return p(d.getDate()) + '-' + p(d.getMonth()+1) + '-' + d.getFullYear();
+  }
+
+  function buildRow(i){
+    var row = document.createElement('div');
+    row.className = 'widgetrow empty';
+    row.dataset.slot = i;
+    row.innerHTML =
+      '<div class="wrowtop"><span class="wtitle"></span><span class="wopendate"></span></div>' +
+      '<div class="wbadgerow">' +
+        '<span class="wstatus"></span>' +
+        '<span class="wtrainstatus" data-frame="0" aria-hidden="true"></span>' +
+        '<span class="wprio"></span>' +
+        '<span class="wteam"></span>' +
+        '<span class="wcost"></span>' +
+      '</div>' +
+      '<div class="wtagrow"></div>' +
+      '<div class="wexpand"><div class="wterm">' +
+        '<div class="wtermbar"><span class="wtermdot"></span>terminal — claude</div>' +
+        '<div class="wtermbody"></div>' +
+      '</div></div>';
+    body.appendChild(row);
+    return {
+      el: row, data: null, costTimer: null, cancelType: null,
+      titleEl: row.querySelector('.wtitle'), dateEl: row.querySelector('.wopendate'),
+      statusEl: row.querySelector('.wstatus'), prioEl: row.querySelector('.wprio'),
+      teamEl: row.querySelector('.wteam'), tagEl: row.querySelector('.wtagrow'),
+      trainEl: row.querySelector('.wtrainstatus'), costEl: row.querySelector('.wcost'),
+      termBody: row.querySelector('.wtermbody')
+    };
+  }
+
+  function typeLines(container, script, onDone){
+    container.innerHTML = '';
+    var cancelled = false, timeouts = [];
+    function schedule(fn, ms){ timeouts.push(setTimeout(fn, ms)); }
+    function nextLine(li){
+      if (cancelled) return;
+      if (li >= script.length){ if (onDone) onDone(); return; }
+      var div = document.createElement('div');
+      div.className = 'wtermline';
+      container.appendChild(div);
+      var si = 0;
+      function nextSeg(){
+        if (cancelled) return;
+        if (si >= script[li].segs.length){ schedule(function(){ nextLine(li + 1); }, 260); return; }
+        var seg = script[li].segs[si];
+        var span = document.createElement('span');
+        if (seg[1]) span.className = seg[1];
+        div.appendChild(span);
+        var ci = 0;
+        function tick(){
+          if (cancelled) return;
+          span.textContent = seg[0].slice(0, ci);
+          ci++;
+          if (ci <= seg[0].length) schedule(tick, 16);
+          else { si++; nextSeg(); }
+        }
+        tick();
+      }
+      nextSeg();
+    }
+    nextLine(0);
+    return function cancel(){ cancelled = true; timeouts.forEach(clearTimeout); };
+  }
+
+  function renderLinesStatic(container, script){
+    container.innerHTML = '';
+    script.forEach(function(line){
+      var div = document.createElement('div');
+      div.className = 'wtermline';
+      line.segs.forEach(function(seg){
+        var s = document.createElement('span');
+        if (seg[1]) s.className = seg[1];
+        s.textContent = seg[0];
+        div.appendChild(s);
+      });
+      container.appendChild(div);
+    });
+  }
+
+  var slots = [0,1,2,3].map(buildRow);
+
+  function render(slot){
+    var d = slot.data, f = FRAMES[d.frame];
+    slot.titleEl.textContent = activeProfile.idPrefix + d.ticketNum + ' — ' + d.title;
+    slot.dateEl.textContent = d.opened;
+    slot.statusEl.textContent = f.label;
+    slot.statusEl.style.color = f.color;
+    slot.statusEl.style.borderColor = f.color;
+    slot.prioEl.textContent = d.prio.label;
+    slot.prioEl.style.color = d.prio.color;
+    slot.teamEl.textContent = d.team;
+    slot.trainEl.setAttribute('data-frame', d.frame);
+    // shown on every row, always — a ticket that hasn't been worked yet still carries
+    // its (zero) cost badge, so cost tracking reads as continuous, not a thing that
+    // only appears while a session happens to be open
+    slot.costEl.textContent = d.provider + ' $' + d.cost.toFixed(2);
+    slot.tagEl.innerHTML = '';
+    d.tags.forEach(function(t){
+      var s = document.createElement('span'); s.className = 'wtag'; s.textContent = t;
+      slot.tagEl.appendChild(s);
+    });
+  }
+
+  function clearExpand(slot){
+    if (slot.costTimer){ clearInterval(slot.costTimer); slot.costTimer = null; }
+    if (slot.cancelType){ slot.cancelType(); slot.cancelType = null; }
+    slot.el.classList.remove('expanded');
+  }
+
+  function fillSlot(slot, frame, animateEnter){
+    clearExpand(slot);
+    slot.data = {
+      title: nextTitle(), frame: frame, prio: pick(PRIO), team: pick(activeProfile.teams),
+      tags: pick(activeProfile.tagsets), ticketNum: 400 + Math.floor(Math.random()*300), opened: recentDate(),
+      provider: pick(PROVIDERS), cost: 0
+    };
+    render(slot);
+    slot.el.classList.remove('empty');
+    if (animateEnter && !reduceMotion){
+      slot.el.classList.remove('entering');
+      void slot.el.offsetWidth; // restart the animation on reuse
+      slot.el.classList.add('entering');
+    }
+  }
+
+  function bump(slot){
+    if (!slot.data || slot.data.frame >= 4) return;
+    slot.data.frame++;
+    render(slot);
+  }
+
+  function depart(slot){
+    clearExpand(slot);
+    if (reduceMotion){ slot.el.classList.add('empty'); slot.data = null; return; }
+    slot.el.classList.add('departing');
+    slot.el.addEventListener('animationend', function handler(){
+      slot.el.removeEventListener('animationend', handler);
+      slot.el.classList.remove('departing');
+      slot.el.classList.add('empty');
+      slot.data = null;
+    });
+  }
+
+  // "you open a terminal with your selected LLM": the row's panel opens onto an
+  // actual terminal transcript typing out, its persistent cost badge ticking up
+  // live, then the work pays off as one more status bump.
+  function expand(slot){
+    if (!slot.data || slot.data.frame >= 4 || slot.el.classList.contains('expanded')) return;
+    slot.el.classList.add('expanded');
+    var d = slot.data;
+    var script = [
+      {segs:[["$ ","p"],["open " + activeProfile.idPrefix + d.ticketNum + " → " + d.provider.toLowerCase(), ""]]},
+      {segs:[["writing ", ""], [pick(activeProfile.files), ""]]},
+      {segs:[["✓ session resumed", "ok"]]}
+    ];
+    if (reduceMotion){ renderLinesStatic(slot.termBody, script); }
+    else { slot.cancelType = typeLines(slot.termBody, script); }
+    slot.costTimer = setInterval(function(){
+      d.cost += 0.03 + Math.random() * 0.05;
+      slot.costEl.textContent = d.provider + ' $' + d.cost.toFixed(2);
+    }, 550);
+    setTimeout(function(){
+      clearExpand(slot);
+      bump(slot);
+    }, 4200);
+  }
+
+  var laneTitleEl = document.getElementById('wLaneTitle');
+  var lanePillEl = document.getElementById('wLanePill');
+  var laneCountEl = document.getElementById('wLaneCount');
+
+  function updateLaneChrome(){
+    laneTitleEl.textContent = activeProfile.laneTitle;
+    lanePillEl.textContent = activeProfile.pillLabel;
+    lanePillEl.className = 'widgetpill ' + activeProfile.pillClass;
+    laneCountEl.textContent = activeProfile.count;
+  }
+
+  function hardResetSlots(){
+    slots.forEach(function(s){
+      clearExpand(s);
+      s.el.classList.remove('entering', 'departing');
+      s.el.classList.add('empty');
+      s.data = null;
+    });
+  }
+
+  var ACTIONS = ['enter', 'bump', 'expand', 'bump', 'depart'];
+  var actionIdx = 0;
+  function tick(){
+    var action = ACTIONS[actionIdx % ACTIONS.length];
+    actionIdx++;
+    var active = function(s){ return s.data && !s.el.classList.contains('expanded'); };
+    if (action === 'enter'){
+      var empty = slots.filter(function(s){ return !s.data; })[0];
+      if (empty) fillSlot(empty, 0, true);
+    } else if (action === 'bump'){
+      var candidates = slots.filter(function(s){ return active(s) && s.data.frame < 4; });
+      if (candidates.length){
+        candidates.sort(function(a,b){ return a.data.frame - b.data.frame; });
+        bump(candidates[0]);
+      }
+    } else if (action === 'expand'){
+      var workable = slots.filter(function(s){ return active(s) && s.data.frame < 4; });
+      if (workable.length) expand(pick(workable));
+    } else if (action === 'depart'){
+      var done = slots.filter(function(s){ return active(s) && s.data.frame === 4; })[0];
+      if (done) depart(done);
+    }
+  }
+
+  var tickTimer = null;
+  function startLoop(){
+    hardResetSlots();
+    titleIdx = 0;
+    actionIdx = 0;
+    updateLaneChrome();
+    // seed some initial variety so the first frame doesn't look uniform
+    fillSlot(slots[0], 2, false);
+    fillSlot(slots[1], 0, false);
+    fillSlot(slots[2], 1, false);
+    // slots[3] starts empty and enters on the first tick
+
+    if (tickTimer){ clearInterval(tickTimer); tickTimer = null; }
+
+    if (reduceMotion){
+      fillSlot(slots[3], 3, false);
+      slots[2].el.classList.add('expanded');
+      slots[2].data.cost = 0.24;
+      slots[2].costEl.textContent = slots[2].data.provider + ' $0.24';
+      renderLinesStatic(slots[2].termBody, [
+        {segs:[["$ ", "p"], ["open " + activeProfile.idPrefix + slots[2].data.ticketNum + " → " + slots[2].data.provider.toLowerCase(), ""]]},
+        {segs:[["writing ", ""], [pick(activeProfile.files), ""]]},
+        {segs:[["✓ session resumed", "ok"]]}
+      ]);
+      return;
+    }
+
+    tick();
+    tickTimer = setInterval(tick, 2200);
+  }
+
+  document.querySelectorAll('.boardtab').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      if (btn.classList.contains('active') || !PROFILES[btn.dataset.tab]) return;
+      document.querySelectorAll('.boardtab').forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      activeProfile = PROFILES[btn.dataset.tab];
+      startLoop();
+    });
+  });
+
+  startLoop();
+})();
+</script>
+</body>
+</html>

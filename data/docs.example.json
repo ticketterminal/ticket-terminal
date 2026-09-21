@@ -1,0 +1,8 @@
+{
+  "example-runbook": {
+    "title": "example-runbook",
+    "path": "docs/example-runbook.md",
+    "kind": "memory",
+    "content": "This is a placeholder doc. Replace data/docs.json (gitignored) with your own team's runbooks/memory files — see README.md for the expected shape: {title, path, kind, content} per doc id, referenced from data/categories.json's `docs` arrays."
+  }
+}

@@ -1,0 +1,10 @@
+[
+  { "id":"onboarding", "name":"Onboarding and Access", "status":"gap", "color":"#4E79A7",
+    "note":"Edit data/categories.json (gitignored) to describe your own team's lanes — this file is just a generic placeholder so a fresh clone has something to render.",
+    "memories":[], "skills":[],
+    "docs":["example-runbook"] },
+  { "id":"incidents", "name":"Incidents", "status":"gap", "color":"#F28E2B",
+    "note":"Another placeholder lane. See README.md for how to point this board at your own knowledge base.",
+    "memories":[], "skills":[],
+    "docs":[] }
+]

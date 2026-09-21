@@ -1,0 +1,29 @@
+# Live local state — this is data, not source, same reasoning as never
+# committing a real database to git. Back this up yourself if you care about
+# it; there's no more claude.ai-hosted persistence now that this isn't an
+# Artifact.
+data/db.json
+data/sessions/
+data/workspaces/
+data/workspaces.json
+data/server.log
+data/categories.json
+data/docs.json
+data/settings.json
+.env
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+data/category-management.json
+data/category-management.tmp
+
+tests/ui/node_modules/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
