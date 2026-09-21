@@ -31,6 +31,15 @@ Signed-off-by: Your Name <you@example.com>
 The name and email must match your commit author. A GitHub Action checks every commit in a
 pull request and fails if one is missing a sign-off.
 
+### Sign off automatically
+
+Run this once per clone and every commit gets the sign-off for you (it uses your
+`git config user.name` and `user.email`, so set those first):
+
+```bash
+scripts/install-hooks.sh
+```
+
 ### Forgot to sign off?
 
 Last commit only:
@@ -46,6 +55,12 @@ Several commits on your branch:
 git rebase --signoff origin/main
 git push --force-with-lease
 ```
+
+## Checks on every pull request
+
+CI runs the backend tests, the UI tests, a full-history secret scan (gitleaks) and the DCO
+check. All must pass before merging. Please never commit credentials, tokens or account
+identifiers, including in test fixtures.
 
 ## Running the tests
 
