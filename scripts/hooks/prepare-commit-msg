@@ -1,0 +1,13 @@
+#!/bin/sh
+# Adds a DCO "Signed-off-by" trailer to every commit so you never need `git commit -s`.
+# Skipped for merge commits, and when no git identity is configured.
+# Install with: scripts/install-hooks.sh
+
+[ "$2" = "merge" ] && exit 0
+
+name=$(git config user.name)
+email=$(git config user.email)
+[ -n "$name" ] && [ -n "$email" ] || exit 0
+
+git interpret-trailers --in-place --if-exists addIfDifferent \
+  --trailer "Signed-off-by: $name <$email>" "$1"
