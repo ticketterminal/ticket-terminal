@@ -13,8 +13,8 @@ backend, frontend, mobile, QA, data, devops — categories, knowledge docs, and 
 all role-configurable, not hardcoded to a single discipline.
 
 <p align="center">
-  <img src="docs/assets/screenshot-board.png" alt="The Ticket Terminal board in dark mode: tickets with status, priority, team and cost badges, and one ticket expanded to show its Claude and Codex session controls" width="900">
-  <br><sub>Sample tickets. Each ticket opens its own Claude or Codex terminal, with the cost badge coming from <code>codeburn</code>.</sub>
+  <img src="docs/assets/screenshot-board.png" alt="The Ticket Terminal board in dark mode: tickets with status, priority, team and cost badges, and one ticket expanded to show an embedded Claude session working on it" width="900">
+  <br><sub>Sample tickets and an illustrative session. Each ticket opens its own Claude or Codex terminal, with the cost badge coming from <code>codeburn</code>.</sub>
 </p>
 
 Underneath the board sits a **shared, vendor-neutral memory**: a knowledge base of architecture
