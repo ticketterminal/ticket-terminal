@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/train-station.png" alt="Pixel-art night train station, the Ticket Terminal banner" width="100%">
+</p>
+
 # Ticket Terminal
 
 *Your ticket board, wired directly into the coding agents doing the work.*
@@ -7,6 +11,11 @@ actual `claude` or `codex` session, scoped to that ticket, that can pick up the 
 commands, and leave a permanent transcript behind. It's built for any engineering role, not one —
 backend, frontend, mobile, QA, data, devops — categories, knowledge docs, and starter presets are
 all role-configurable, not hardcoded to a single discipline.
+
+<p align="center">
+  <img src="docs/assets/screenshot-board.png" alt="The Ticket Terminal board: tickets grouped into Bugs, Features and Platform lanes, with status and team filters" width="900">
+  <br><sub>The board, with sample data. Each ticket opens its own Claude or Codex terminal.</sub>
+</p>
 
 Underneath the board sits a **shared, vendor-neutral memory**: a knowledge base of architecture
 notes, runbooks, and decisions that any agent — Claude, Codex, or a future local model — can read
