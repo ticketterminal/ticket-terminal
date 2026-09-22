@@ -247,3 +247,11 @@ your commits with `git commit -s`. There is no CLA and no copyright assignment. 
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE). Contributions are accepted under the same license.
+
+<p align="center">
+  <a href="https://ticket-terminal.work-management-platform.workers.dev/">
+    <img src="docs/assets/seurat-labs-mark.svg" width="28" height="28" alt="Seurat Labs mark">
+  </a>
+  <br>
+  <sub>Built by <a href="https://ticket-terminal.work-management-platform.workers.dev/">Seurat Labs</a></sub>
+</p>
