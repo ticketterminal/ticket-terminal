@@ -4,6 +4,8 @@
 
 # Ticket Terminal
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ticketterminal/ticket-terminal/badge)](https://scorecard.dev/viewer/?uri=github.com/ticketterminal/ticket-terminal)
+
 *Your ticket board, wired directly into the coding agents doing the work.*
 
 Ticket Terminal is a local ticket board where every ticket has a **real embedded terminal**: an
