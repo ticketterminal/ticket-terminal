@@ -1,1 +1,1 @@
-{"private": true, "type": "module", "scripts": {"test": "node categories.mjs && node notion-settings.mjs && node sprints.mjs && node workspaces.mjs && node insights.mjs"}, "devDependencies": {"linkedom": "0.18.12"}}
+{"private": true, "type": "module", "scripts": {"test": "node categories.mjs && node notion-settings.mjs && node sprints.mjs && node workspaces.mjs && node insights.mjs"}, "devDependencies": {"linkedom": "0.18.13"}}
