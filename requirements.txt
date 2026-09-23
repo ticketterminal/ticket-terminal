@@ -1,5 +1,5 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
-requests>=2.32
-python-dotenv>=1.0
+requests>=2.33.0
+python-dotenv>=1.2.2
 pyyaml>=6.0
