@@ -7,6 +7,8 @@
 # Pinned-Dependencies check.
 name: "CodeQL Advanced"
 
+permissions: read-all
+
 on:
   push:
     branches: [ main ]
