@@ -17,6 +17,9 @@ on:
     - cron: '30 1 * * 6'
   push:
     branches: [ main ]
+  # Lets you re-run from the Actions tab on demand, instead of needing an
+  # actual push to main to find out if a fix landed.
+  workflow_dispatch:
 
 # Declare default permissions as read only.
 permissions: read-all
