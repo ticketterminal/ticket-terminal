@@ -157,6 +157,45 @@ class JiraContentTagSyncTests(unittest.TestCase):
         self.assertEqual(ticket["description"], "Changed body")
         self.assertEqual(result["tagError"], "Claude offline")
 
+    def test_refresh_sets_parent_key_from_the_jira_parent_field(self):
+        with_parent = issue()
+        with_parent["fields"]["parent"] = {"key": "OPS-100"}
+        self.sync(with_parent, {})
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["parentKey"], "OPS-100")
+
+    def test_refresh_clears_parent_key_once_a_subtask_is_promoted(self):
+        self.db.data["jiraTickets"]["OPS-1"]["parentKey"] = "OPS-100"
+        self.sync(issue(), {})  # no "parent" field on this issue
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["parentKey"], "")
+
+
+class JiraDiscoverParentKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.db = FakeDB({})
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+        self.db.data["jiraTickets"]["OPS-0"] = {"key": "OPS-0", "createdAt": "2026-01-01T00:00:00+00:00"}
+
+    def discover(self, jira_issue):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([jira_issue])):
+            auto_categorize.classify.return_value = []
+            return jira_sync.discover_new_tickets(self.db)
+
+    def test_a_newly_discovered_subtask_gets_its_parent_key(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-2"
+        new_issue["fields"]["parent"] = {"key": "OPS-1"}
+        self.discover(new_issue)
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-2"]["parentKey"], "OPS-1")
+
+    def test_a_top_level_issue_gets_an_empty_parent_key_not_a_missing_field(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-3"
+        self.discover(new_issue)
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-3"]["parentKey"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

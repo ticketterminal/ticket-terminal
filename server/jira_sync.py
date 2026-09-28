@@ -134,7 +134,7 @@ def discover_new_tickets(db) -> dict:
         f"{c['base_url']}/rest/api/3/search/jql",
         json={
             "jql": f'project = {c["project"]} AND created > "{cutoff}" ORDER BY created ASC',
-            "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype"],
+            "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent"],
             "maxResults": 50,
         },
         auth=(c["email"], c["api_token"]),
@@ -161,6 +161,7 @@ def discover_new_tickets(db) -> dict:
             "jiraStatus": (fields.get("status") or {}).get("name", ""),
             "jiraPriority": (fields.get("priority") or {}).get("name", ""),
             "reporter": (fields.get("reporter") or {}).get("displayName", ""),
+            "parentKey": (fields.get("parent") or {}).get("key") or "",
             "categories": guess,
             "suggestedCategories": guess,
             "team": "",
@@ -201,7 +202,7 @@ def sync_all_tickets(db) -> dict:
             # Atlassian retired the old /rest/api/3/search (410 Gone, confirmed
             # live 2026-09-06) in favor of this one — same request/response shape.
             f"{c['base_url']}/rest/api/3/search/jql",
-            json={"jql": jql, "fields": ["summary", "description", "status", "priority"], "maxResults": len(batch)},
+            json={"jql": jql, "fields": ["summary", "description", "status", "priority", "parent"], "maxResults": len(batch)},
             auth=(c["email"], c["api_token"]),
             timeout=15,
         )
@@ -211,6 +212,7 @@ def sync_all_tickets(db) -> dict:
             fields = issue.get("fields", {})
             status_name = (fields.get("status") or {}).get("name")
             priority_name = (fields.get("priority") or {}).get("name")
+            parent_key = (fields.get("parent") or {}).get("key") or ""
             ticket = data["jiraTickets"].get(key, {})
             summary = fields.get("summary") or ticket.get("summary", "")
             description = _adf_to_text(fields.get("description"))
@@ -224,6 +226,8 @@ def sync_all_tickets(db) -> dict:
                 patch["jiraStatus"] = status_name
             if priority_name and priority_name != ticket.get("jiraPriority"):
                 patch["jiraPriority"] = priority_name
+            if parent_key != (ticket.get("parentKey") or ""):
+                patch["parentKey"] = parent_key
             if patch:
                 db.update_ticket(key, patch)
                 changed_keys.append(key)
