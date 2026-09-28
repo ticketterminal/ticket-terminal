@@ -18,7 +18,7 @@ Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:t
 globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true})});
 
 const {state}=await import(root+'/public/state.js');
-const {buildLaneItems}=await import(root+'/public/lanes.js');
+const {buildLaneItems,renderLaneItems}=await import(root+'/public/lanes.js');
 const {renderSearch,searchForTicket}=await import(root+'/public/filters.js');
 const {renderTicketRow}=await import(root+'/public/ticket-row.js');
 
@@ -44,6 +44,22 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
   assert.equal(flat.length,3,'"show flat" ignores parentKey entirely, same as before nesting existed');
   assert.ok(flat.every(i=>i.type==='ticket'));
   state.showNested=true;
+}
+
+// --- renderLaneItems: an epic's own row renders flush, only children collapse -----------
+{
+  const parent=doc('OPS-30',{issueType:'Epic',summary:'Ship the migration'});
+  const child=doc('OPS-31',{parentKey:'OPS-30',summary:'Cut the base image'});
+  const container=document.createElement('div');
+  renderLaneItems(container, [{type:'ticket',doc:doc('OPS-29',{})}, {type:'parent',doc:parent,children:[child]}], {}, cmp);
+  const topLevelRows=[...container.children].filter(c=>c.classList.contains('ticketrow'));
+  assert.equal(topLevelRows.length,2,'the plain ticket and the epic parent both render as flush top-level rows, not boxed');
+  assert.ok(!container.querySelector('.epicbox'),'the epic parent is no longer wrapped in its own box');
+  const wrap=container.querySelector('.epicchildrenwrap');
+  assert.ok(wrap,'children render inside a collapsible wrap');
+  assert.equal(wrap.open,true,'children are expanded by default');
+  assert.equal(wrap.querySelector('summary').textContent,'1 sub-task');
+  assert.ok(wrap.querySelector('.epicchildren .ticketrow'),'the child ticket renders inside the wrap');
 }
 
 // --- search pulls in a matched subtask's parent, for context ----------------------------

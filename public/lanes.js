@@ -414,17 +414,26 @@ export function renderLaneItems(container, items, dbRef, cmp, emptyMessage){
   }
   items.forEach(item => {
     if (item.type === "parent"){
-      const box = el("div","epicbox");
-      box.appendChild(renderTicketRow(item.doc, dbRef));
+      // The parent's own row renders as a plain flush sibling — same markup as any other
+      // top-level ticket — so it lines up with the ticket above it instead of looking like a
+      // nested child itself. Only its children sit inside the indented, collapsible box.
+      container.appendChild(renderTicketRow(item.doc, dbRef));
       if (item.children.length){
+        const wrap = document.createElement("details");
+        wrap.className = "epicchildrenwrap";
+        wrap.open = true;
+        const summary = document.createElement("summary");
+        summary.className = "epicchildrentoggle";
+        summary.textContent = item.children.length + (item.children.length === 1 ? " sub-task" : " sub-tasks");
+        wrap.appendChild(summary);
         const kids = el("div","epicchildren");
         item.children
           .slice()
           .sort(cmp)
           .forEach(c => kids.appendChild(renderTicketRow(c, dbRef)));
-        box.appendChild(kids);
+        wrap.appendChild(kids);
+        container.appendChild(wrap);
       }
-      container.appendChild(box);
     } else {
       container.appendChild(renderTicketRow(item.doc, dbRef));
     }
