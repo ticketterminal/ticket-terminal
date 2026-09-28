@@ -783,7 +783,8 @@ def get_insights():
     LLM."""
     try:
         tickets = db.read()["jiraTickets"]
-        return {"ok": True, "data": workflow_insights.compute_insights(tickets, DEFAULT_WORKDIR)}
+        live_entries = _live_spend_entries()
+        return {"ok": True, "data": workflow_insights.compute_insights(tickets, DEFAULT_WORKDIR, live_entries)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -943,6 +944,43 @@ def get_running_processes():
     with processes_lock:
         keys = [k for k in running_processes if k.startswith(prefix)]
     return {"ok": True, "running": [_wire_process_key(k) for k in keys]}
+
+
+def _live_spend_entries() -> list[dict]:
+    """Same shape as a spend-ledger entry, for every ticket with a background process
+    currently running in this workspace. The ledger only gets an entry once a session
+    actually closes (see _terminate_process and terminal_ws's exit branch below) — nothing
+    prompts anyone to click Stop, so most real work sits in still-open sessions the ledger
+    has never seen. Best-effort: skips a process if codeburn has no row for its session yet
+    (very first few seconds of a brand-new session) rather than raising."""
+    prefix = workspaces.current() + "|"
+    with processes_lock:
+        keys = [k for k in running_processes if k.startswith(prefix)]
+    if not keys:
+        return []
+    try:
+        costs = cost_analysis.get_session_costs()
+    except Exception:
+        return []
+    tickets = db.read()["jiraTickets"]
+    entries = []
+    for registry_key in keys:
+        _, provider, ticket_key = registry_key.split("|", 2)
+        ticket = tickets.get(ticket_key)
+        session_id = ticket.get(provider + "SessionId") if ticket else None
+        row = costs.get(session_id) if session_id else None
+        if not ticket or not row:
+            continue
+        entries.append({
+            "ticketKey": ticket_key, "provider": provider, "sessionId": session_id,
+            "models": row.get("models", []), "cost": row.get("cost", 0),
+            "calls": row.get("calls", 0), "turns": row.get("turns", 0),
+            "inputTokens": row.get("inputTokens", 0), "outputTokens": row.get("outputTokens", 0),
+            "cacheReadTokens": row.get("cacheReadTokens", 0), "cacheWriteTokens": row.get("cacheWriteTokens", 0),
+            "durationMs": row.get("durationMs"),
+            "categories": ticket.get("categories") or [], "priority": ticket.get("jiraPriority") or "",
+        })
+    return entries
 
 
 def _terminate_process(registry_key: str, proc_info: dict, close_reason: str) -> None:

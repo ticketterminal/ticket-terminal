@@ -150,8 +150,17 @@ def get_optimize_findings() -> dict | None:
         return None
 
 
-def compute_insights(tickets: dict, default_workdir: str) -> dict:
+def compute_insights(tickets: dict, default_workdir: str, live_entries: list[dict] | None = None) -> dict:
+    """`live_entries` (see main.py's _live_spend_entries) are same-shaped rows for sessions
+    that are still running — the ledger only gets an entry once a session actually closes, so
+    without these, cost/category stats silently miss every ticket whose terminal is still open
+    (which, in practice, is most of them: nothing here nudges anyone to click Stop). Entries are
+    keyed by sessionId, so a live entry is dropped if the ledger already has that exact session
+    (it closed between the two reads) rather than double-counting it."""
     entries = spend_ledger.read_entries()
+    if live_entries:
+        closed_ids = {e.get("sessionId") for e in entries}
+        entries = entries + [e for e in live_entries if e.get("sessionId") not in closed_ids]
     return {
         "vendorModel": vendor_model_stats(entries),
         "caching": caching_stats(entries),

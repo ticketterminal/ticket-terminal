@@ -157,6 +157,31 @@ class ComputeInsightsTests(unittest.TestCase):
         self.assertEqual(set(result), {'vendorModel', 'caching', 'memory', 'codeburnOptimize', 'ledgerEntryCount'})
         self.assertEqual(result['ledgerEntryCount'], 1)
 
+    def test_live_entries_are_merged_in_alongside_the_closed_ledger(self):
+        closed = entry(session_id='s-closed', cost=1.0)
+        live = entry(session_id='s-live', cost=2.0, ticket_key='T-2')
+        with patch.object(wi.spend_ledger, 'read_entries', return_value=[closed]), \
+             patch.object(wi.memory_analysis, 'all_ticket_memory_usage', return_value={}), \
+             patch.object(wi.memory_analysis, 'memory_file_stats', return_value={}), \
+             patch.object(wi, 'get_optimize_findings', return_value=None):
+            result = wi.compute_insights({}, '/tmp', live_entries=[live])
+        self.assertEqual(result['ledgerEntryCount'], 2)
+        self.assertEqual(sum(r['totalCost'] for r in result['vendorModel']['byVendorModel']), 3.0)
+
+    def test_a_live_entry_already_in_the_closed_ledger_is_not_double_counted(self):
+        # The session closed for real in the moment between building live_entries and this
+        # read of the ledger -- the ledger's copy (the authoritative, final one) wins, not a
+        # second row for the same session.
+        closed = entry(session_id='s-1', cost=1.0)
+        live = entry(session_id='s-1', cost=999.0)
+        with patch.object(wi.spend_ledger, 'read_entries', return_value=[closed]), \
+             patch.object(wi.memory_analysis, 'all_ticket_memory_usage', return_value={}), \
+             patch.object(wi.memory_analysis, 'memory_file_stats', return_value={}), \
+             patch.object(wi, 'get_optimize_findings', return_value=None):
+            result = wi.compute_insights({}, '/tmp', live_entries=[live])
+        self.assertEqual(result['ledgerEntryCount'], 1)
+        self.assertEqual(sum(r['totalCost'] for r in result['vendorModel']['byVendorModel']), 1.0)
+
 
 if __name__ == '__main__':
     unittest.main()
