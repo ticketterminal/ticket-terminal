@@ -60,6 +60,31 @@ def _adf_to_text(node) -> str:
     return text
 
 
+def _parse_issue_links(fields) -> list[dict]:
+    """Jira's issuelinks: each entry names the relationship from ONE side only — the side
+    this issue is on decides whether to read `outwardIssue`/type.outward ("blocks") or
+    `inwardIssue`/type.inward ("is blocked by"). A link missing both (deleted/inaccessible
+    issue on the other end) is skipped rather than guessed at."""
+    links = []
+    for link in fields.get("issuelinks") or []:
+        link_type = link.get("type") or {}
+        if "outwardIssue" in link:
+            other, label = link["outwardIssue"], link_type.get("outward", "relates to")
+        elif "inwardIssue" in link:
+            other, label = link["inwardIssue"], link_type.get("inward", "relates to")
+        else:
+            continue
+        other_key = other.get("key")
+        if not other_key:
+            continue
+        links.append({
+            "key": other_key,
+            "label": label,
+            "summary": (other.get("fields") or {}).get("summary", ""),
+        })
+    return links
+
+
 def get_config():
     jira = settings_store.read()["jira"]
     return {
@@ -134,7 +159,7 @@ def discover_new_tickets(db) -> dict:
         f"{c['base_url']}/rest/api/3/search/jql",
         json={
             "jql": f'project = {c["project"]} AND created > "{cutoff}" ORDER BY created ASC',
-            "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent"],
+            "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent", "issuelinks"],
             "maxResults": 50,
         },
         auth=(c["email"], c["api_token"]),
@@ -162,6 +187,7 @@ def discover_new_tickets(db) -> dict:
             "jiraPriority": (fields.get("priority") or {}).get("name", ""),
             "reporter": (fields.get("reporter") or {}).get("displayName", ""),
             "parentKey": (fields.get("parent") or {}).get("key") or "",
+            "linkedIssues": _parse_issue_links(fields),
             "categories": guess,
             "suggestedCategories": guess,
             "team": "",
@@ -202,7 +228,7 @@ def sync_all_tickets(db) -> dict:
             # Atlassian retired the old /rest/api/3/search (410 Gone, confirmed
             # live 2026-09-06) in favor of this one — same request/response shape.
             f"{c['base_url']}/rest/api/3/search/jql",
-            json={"jql": jql, "fields": ["summary", "description", "status", "priority", "parent"], "maxResults": len(batch)},
+            json={"jql": jql, "fields": ["summary", "description", "status", "priority", "parent", "issuelinks"], "maxResults": len(batch)},
             auth=(c["email"], c["api_token"]),
             timeout=15,
         )
@@ -213,6 +239,7 @@ def sync_all_tickets(db) -> dict:
             status_name = (fields.get("status") or {}).get("name")
             priority_name = (fields.get("priority") or {}).get("name")
             parent_key = (fields.get("parent") or {}).get("key") or ""
+            linked_issues = _parse_issue_links(fields)
             ticket = data["jiraTickets"].get(key, {})
             summary = fields.get("summary") or ticket.get("summary", "")
             description = _adf_to_text(fields.get("description"))
@@ -228,6 +255,8 @@ def sync_all_tickets(db) -> dict:
                 patch["jiraPriority"] = priority_name
             if parent_key != (ticket.get("parentKey") or ""):
                 patch["parentKey"] = parent_key
+            if linked_issues != (ticket.get("linkedIssues") or []):
+                patch["linkedIssues"] = linked_issues
             if patch:
                 db.update_ticket(key, patch)
                 changed_keys.append(key)

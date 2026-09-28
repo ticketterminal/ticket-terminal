@@ -379,6 +379,14 @@ export function buildCategoryUI(){
    per-category lanes and the flat "all tickets" view (which isn't scoped to
    one category, so there's no cat.id to look a sort mode up by). */
 export function buildLaneItems(forCat, cmp){
+  const items = [];
+  // "Show flat" reverts to exactly how every ticket rendered before this grouping existed —
+  // every doc a plain sibling row, parentKey ignored entirely.
+  if (!state.showNested){
+    forCat.forEach(d => items.push({type:"ticket", doc:d}));
+    items.sort((a,b) => cmp(a.doc, b.doc));
+    return items;
+  }
   const byId = {};
   forCat.forEach(d => { byId[d.id] = d; });
   const childrenOfParent = {};
@@ -388,7 +396,6 @@ export function buildLaneItems(forCat, cmp){
       (childrenOfParent[data.parentKey] = childrenOfParent[data.parentKey] || []).push(d);
     }
   });
-  const items = [];
   forCat.forEach(d => {
     const data = d.data() || {};
     if (data.parentKey && byId[data.parentKey]) return; // rendered nested under its parent instead

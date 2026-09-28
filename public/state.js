@@ -87,6 +87,9 @@ export const state = {
   // preferences (localStorage), not shared server state.
   viewMode: localStorage.getItem("wmp.viewMode") === "flat" ? "flat" : "grouped",
   flatSortMode: ["status", "priority", "date"].includes(localStorage.getItem("wmp.flatSort")) ? localStorage.getItem("wmp.flatSort") : "date",
+  // Whether a subtask nests inside its parent's box (lanes.js's buildLaneItems) or every
+  // ticket renders as a flat sibling, same as before that grouping existed.
+  showNested: localStorage.getItem("wmp.showNested") !== "off",
 
   // Multi-select team filter — see filters.js's syncSelectedTeams for why both of
   // these exist (null selectedTeams = not yet initialized).
