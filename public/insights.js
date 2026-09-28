@@ -164,7 +164,7 @@ async function load(){
   const data = res.data;
   body.innerHTML = "";
   if (!data.ledgerEntryCount){
-    body.appendChild(el("div", "empty-state", "No session-cost history yet — this fills in as tickets' terminal sessions are stopped (or finish on their own)."));
+    body.appendChild(el("div", "empty-state", "No session-cost history yet — this fills in once a ticket's terminal session has actually done something (running or closed, either counts)."));
   }
   body.appendChild(renderVendorModel(data.vendorModel));
   body.appendChild(renderCaching(data.caching));
