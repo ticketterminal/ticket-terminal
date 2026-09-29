@@ -231,9 +231,13 @@
   .badge.ro{background:transparent;border:1px dashed var(--line);color:var(--ink-muted);}
   .badge.new{background:var(--accent);color:var(--accent-ink);border:none;font-weight:600;}
   .badge.epicbadge{background:#7A6FB0;color:#fff;border:none;font-weight:700;}
-  .epicbox{border:1px solid var(--line);border-radius:4px;background:var(--surface-2);padding:9px 8px 9px 8px;margin:2px 0;}
-  .epicbox > .ticketrow{border-top:none;padding-top:0;}
-  .epicchildren{margin:8px 0 0 16px;padding:8px 0 0 12px;border-top:1px dashed var(--line);border-left:2px dashed var(--line);display:flex;flex-direction:column;gap:0;}
+  .epicchildrenwrap{margin:2px 0 2px 16px;}
+  .epicchildrenwrap>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;padding:6px 0;font-family:"IBM Plex Mono",monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-muted);}
+  .epicchildrenwrap>summary::-webkit-details-marker{display:none;}
+  .epicchildrenwrap>summary::before{content:"▸";font-size:10px;color:var(--accent);}
+  .epicchildrenwrap[open]>summary::before{content:"▾";}
+  .epicchildrenwrap>summary:hover{color:var(--ink);}
+  .epicchildren{padding:4px 0 4px 12px;border-left:2px dashed var(--line);display:flex;flex-direction:column;gap:0;}
   .epicchildren .ticketrow{padding-left:8px;}
   .reportertag{font-family:"Public Sans",sans-serif;font-size:11px;color:var(--ink-muted);font-style:italic;}
   .badge.priobadge{border:none;font-weight:700;}
@@ -410,6 +414,14 @@
   .memoryusagename{cursor:pointer;color:var(--accent);}
   .memoryusagename:hover{text-decoration:underline;}
   .memoryusagecount{color:var(--ink-muted);font-variant-numeric:tabular-nums;}
+  .linkedissueswrap{display:flex;flex-direction:column;gap:8px;}
+  .linkedissueslist{display:flex;flex-direction:column;gap:6px;}
+  .linkedissueline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;padding:6px;background:var(--surface-2);border-radius:3px;}
+  .linkedissuelabel{font-family:"IBM Plex Mono",monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-muted);flex:none;}
+  .linkedissuekey{flex:1 1 auto;min-width:0;text-align:left;border:none;background:none;color:var(--ink);cursor:pointer;font:inherit;padding:0;}
+  .linkedissuekey:hover{color:var(--accent);}
+  .linkedissuejira{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--accent);text-decoration:none;flex:none;}
+  .linkedissuejira:hover{text-decoration:underline;}
   .mrlinkrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .mrlinkinput{font-family:"IBM Plex Mono",monospace;font-size:11.5px;padding:5px 9px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2);color:var(--ink);flex:1 1 260px;min-width:0;}
   .mrlinkinput::placeholder{color:var(--ink-muted);}

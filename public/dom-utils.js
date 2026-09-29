@@ -55,7 +55,17 @@ export function formatDuration(ms){
    rendered rows instead of guessing a pixel value. */
 export function applyScrollCap(container, limit){
   limit = limit || 10;
-  const rows = Array.from(container.children).filter(c => c.classList && (c.classList.contains("ticketrow") || c.classList.contains("epicbox")));
+  // Each top-level ticketrow is one row for cap-counting purposes — including an epic's own
+  // (now-flush) row. When one is immediately followed by its .epicchildrenwrap, that sibling's
+  // height is folded into THIS row's cutoff bound instead of counted as extra rows, so an epic
+  // group is either fully shown or fully clipped past the cap, never sliced mid-group.
+  const kids = Array.from(container.children);
+  const rows = [];
+  kids.forEach((c, i) => {
+    if (!c.classList || !c.classList.contains("ticketrow")) return;
+    const next = kids[i + 1];
+    rows.push(next && next.classList && next.classList.contains("epicchildrenwrap") ? next : c);
+  });
   if (rows.length > limit){
     container.classList.add("scrollcap");
     const cutoff = rows[limit - 1];

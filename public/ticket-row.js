@@ -15,6 +15,7 @@ import { teamColor, teamForReporter } from "./people.js";
 import { costBadgeText, costBadgeTitle, renderCostDetail, renderMemoryDetail } from "./badges.js";
 import { buildRunningProcessBadge, attachTerminal } from "./terminal-controller.js";
 import { routeHash } from "./workspaces.js";
+import { searchForTicket } from "./filters.js";
 
 const STATUS_SELECT_ORDER = [
   "cancelled", "canceled", "backlog", "open", "to do", "todo",
@@ -505,6 +506,37 @@ function buildExpandPanel(data, doc, dbRef){
     });
     propsWrap.appendChild(grid);
     expandPanel.appendChild(propsWrap);
+  }
+
+  const linkedIssues = Array.isArray(data.linkedIssues) ? data.linkedIssues : [];
+  if (linkedIssues.length){
+    const linksWrap = el("div","linkedissueswrap");
+    linksWrap.appendChild(el("span","reflabel","Linked tickets"));
+    const linksList = el("div","linkedissueslist");
+    linkedIssues.forEach(link => {
+      const line = el("div","linkedissueline");
+      line.appendChild(el("span","linkedissuelabel", link.label + ":"));
+      const key = document.createElement("button");
+      key.type = "button";
+      key.className = "linkedissuekey";
+      key.textContent = link.key + (link.summary ? " — " + link.summary : "");
+      key.title = "Find " + link.key + " in Ticket Terminal";
+      key.addEventListener("click", () => searchForTicket(link.key));
+      line.appendChild(key);
+      const jiraUrl = jiraHref(link.key);
+      if (jiraUrl){
+        const jiraLink = document.createElement("a");
+        jiraLink.href = jiraUrl;
+        jiraLink.target = "_blank";
+        jiraLink.rel = "noopener noreferrer";
+        jiraLink.className = "linkedissuejira";
+        jiraLink.textContent = "Jira ↗";
+        line.appendChild(jiraLink);
+      }
+      linksList.appendChild(line);
+    });
+    linksWrap.appendChild(linksList);
+    expandPanel.appendChild(linksWrap);
   }
 
   const termWrap = el("div","termwrap");

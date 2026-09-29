@@ -109,6 +109,33 @@ class ContentTagTests(unittest.TestCase):
         self.assertIn("--tools", command)
 
 
+class JiraParseIssueLinksTests(unittest.TestCase):
+    def test_outward_link_uses_the_outward_label(self):
+        fields = {"issuelinks": [{
+            "type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+            "outwardIssue": {"key": "OPS-50", "fields": {"summary": "Cut the base image"}},
+        }]}
+        self.assertEqual(jira_sync._parse_issue_links(fields), [
+            {"key": "OPS-50", "label": "blocks", "summary": "Cut the base image"},
+        ])
+
+    def test_inward_link_uses_the_inward_label(self):
+        fields = {"issuelinks": [{
+            "type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+            "inwardIssue": {"key": "OPS-51", "fields": {"summary": "Ship the release"}},
+        }]}
+        self.assertEqual(jira_sync._parse_issue_links(fields), [
+            {"key": "OPS-51", "label": "is blocked by", "summary": "Ship the release"},
+        ])
+
+    def test_a_link_with_neither_side_present_is_skipped(self):
+        fields = {"issuelinks": [{"type": {"name": "Blocks"}}]}
+        self.assertEqual(jira_sync._parse_issue_links(fields), [])
+
+    def test_no_issuelinks_field_at_all_returns_empty(self):
+        self.assertEqual(jira_sync._parse_issue_links({}), [])
+
+
 class JiraContentTagSyncTests(unittest.TestCase):
     def setUp(self):
         self.db = FakeDB({
@@ -156,6 +183,71 @@ class JiraContentTagSyncTests(unittest.TestCase):
         self.assertEqual(ticket["jiraStatus"], "In Progress")
         self.assertEqual(ticket["description"], "Changed body")
         self.assertEqual(result["tagError"], "Claude offline")
+
+    def test_refresh_sets_parent_key_from_the_jira_parent_field(self):
+        with_parent = issue()
+        with_parent["fields"]["parent"] = {"key": "OPS-100"}
+        self.sync(with_parent, {})
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["parentKey"], "OPS-100")
+
+    def test_refresh_clears_parent_key_once_a_subtask_is_promoted(self):
+        self.db.data["jiraTickets"]["OPS-1"]["parentKey"] = "OPS-100"
+        self.sync(issue(), {})  # no "parent" field on this issue
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["parentKey"], "")
+
+    def test_refresh_sets_linked_issues(self):
+        with_link = issue()
+        with_link["fields"]["issuelinks"] = [{
+            "type": {"outward": "blocks"}, "outwardIssue": {"key": "OPS-50", "fields": {"summary": "Cut the base image"}},
+        }]
+        self.sync(with_link, {})
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["linkedIssues"], [
+            {"key": "OPS-50", "label": "blocks", "summary": "Cut the base image"},
+        ])
+
+    def test_refresh_clears_linked_issues_once_unlinked(self):
+        self.db.data["jiraTickets"]["OPS-1"]["linkedIssues"] = [{"key": "OPS-50", "label": "blocks", "summary": "x"}]
+        self.sync(issue(), {})  # no "issuelinks" field on this issue
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["linkedIssues"], [])
+
+
+class JiraDiscoverParentKeyTests(unittest.TestCase):
+    def setUp(self):
+        self.db = FakeDB({})
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+        self.db.data["jiraTickets"]["OPS-0"] = {"key": "OPS-0", "createdAt": "2026-01-01T00:00:00+00:00"}
+
+    def discover(self, jira_issue):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([jira_issue])):
+            auto_categorize.classify.return_value = []
+            return jira_sync.discover_new_tickets(self.db)
+
+    def test_a_newly_discovered_subtask_gets_its_parent_key(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-2"
+        new_issue["fields"]["parent"] = {"key": "OPS-1"}
+        self.discover(new_issue)
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-2"]["parentKey"], "OPS-1")
+
+    def test_a_top_level_issue_gets_an_empty_parent_key_not_a_missing_field(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-3"
+        self.discover(new_issue)
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-3"]["parentKey"], "")
+
+    def test_a_newly_discovered_issue_gets_its_linked_issues(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-4"
+        new_issue["fields"]["issuelinks"] = [{
+            "type": {"inward": "is blocked by"}, "inwardIssue": {"key": "OPS-1", "fields": {"summary": "Old title"}},
+        }]
+        self.discover(new_issue)
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-4"]["linkedIssues"], [
+            {"key": "OPS-1", "label": "is blocked by", "summary": "Old title"},
+        ])
 
 
 if __name__ == "__main__":

@@ -2,8 +2,7 @@
 import { state } from "./state.js";
 import { el, applyScrollCap } from "./dom-utils.js";
 import { teamColor, teamForReporter } from "./people.js";
-import { compareByPriority, renderFlatList, laneTicketLists, lanesEl, renderTickets } from "./lanes.js";
-import { renderTicketRow } from "./ticket-row.js";
+import { compareByPriority, renderFlatList, laneTicketLists, lanesEl, renderTickets, buildLaneItems, renderLaneItems } from "./lanes.js";
 
 const allTicketsEl = document.getElementById("allTicketsView");
 const allTicketsListEl = document.getElementById("allTicketsList");
@@ -11,6 +10,7 @@ const flatSortSelEl = document.getElementById("flatSortSel");
 const viewGroupedBtn = document.getElementById("viewGroupedBtn");
 const viewFlatBtn = document.getElementById("viewFlatBtn");
 const inProgressBtn = document.getElementById("inProgressBtn");
+const nestingToggleBtn = document.getElementById("nestingToggleBtn");
 const searchResultsEl = document.getElementById("searchResults");
 const searchListEl = document.getElementById("searchList");
 const searchCountEl = document.getElementById("searchCount");
@@ -292,15 +292,44 @@ export function renderSearch(){
   // category assignments and so appear in several lanes.
   const matches = state.lastTicketDocs.filter(d => matchesQuery(d, q) && passesFilters(d));
   matches.sort(compareByPriority);
+  // A matched subtask's parent isn't itself a match (its own title/summary didn't hit the
+  // query), but showing the subtask with no idea what it's a subtask OF is worse than showing
+  // one extra row — pull the parent in too, purely for that context, whether nesting is on or
+  // not affects only whether buildLaneItems then groups the two visually.
+  let forItems = matches;
+  if (state.showNested){
+    const matchIds = new Set(matches.map(d => d.id));
+    const byId = {};
+    state.lastTicketDocs.forEach(d => { byId[d.id] = d; });
+    const extraParents = [];
+    matches.forEach(d => {
+      const parentKey = (d.data() || {}).parentKey;
+      if (parentKey && byId[parentKey] && !matchIds.has(parentKey)){
+        matchIds.add(parentKey);
+        extraParents.push(byId[parentKey]);
+      }
+    });
+    if (extraParents.length) forItems = matches.concat(extraParents);
+  }
   searchListEl.innerHTML = "";
   if (matches.length === 0){
     searchListEl.appendChild(el("span","empty","No tickets match “"+q+"”."));
   } else {
-    matches.forEach(d => searchListEl.appendChild(renderTicketRow(d, state.lastDbRef)));
+    renderLaneItems(searchListEl, buildLaneItems(forItems, compareByPriority), state.lastDbRef, compareByPriority);
   }
   applyScrollCap(searchListEl, 10);
   searchCountEl.textContent = matches.length + (matches.length === 1 ? " ticket" : " tickets");
   searchHintEl.textContent = "matches key, summary, person, or team — includes Done tickets";
+}
+
+// A linked ticket's "open in Ticket Terminal" link (ticket-row.js) reuses the search box
+// itself rather than a dedicated per-ticket route — search already finds a ticket regardless
+// of which lane/category/filter state it's currently hidden behind, which a route to "scroll
+// this row into view" couldn't guarantee (the row might not even be rendered right now).
+export function searchForTicket(key){
+  searchInputEl.value = key;
+  searchInputEl.dispatchEvent(new Event("input"));
+  searchInputEl.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
 // Which of lanes / all-tickets / search-results is visible right now — a
@@ -368,6 +397,14 @@ export function wireFiltersUI(){
       renderTickets(state.lastTicketDocs, state.lastDbRef);
     });
   }
+
+  nestingToggleBtn.textContent = state.showNested ? "Show flat" : "Show nested";
+  nestingToggleBtn.addEventListener("click", () => {
+    state.showNested = !state.showNested;
+    try { localStorage.setItem("wmp.showNested", state.showNested ? "on" : "off"); } catch (e) {}
+    nestingToggleBtn.textContent = state.showNested ? "Show flat" : "Show nested";
+    renderTickets(state.lastTicketDocs, state.lastDbRef);
+  });
 
   viewGroupedBtn.addEventListener("click", () => setViewMode("grouped"));
   viewFlatBtn.addEventListener("click", () => setViewMode("flat"));
