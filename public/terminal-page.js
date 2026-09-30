@@ -9,21 +9,34 @@ import { categoryLabel } from "./dom-utils.js";
 
 const hostEl = document.getElementById("terminalPageHost");
 const titleEl = document.getElementById("terminalPageTitle");
+// Captured once at load, so this stays whatever index.html's <title> actually
+// says instead of hardcoding a second copy of it here.
+const DEFAULT_TITLE = document.title;
 
 // Whichever ticket/provider this page currently holds, so leaving the route
 // (router.js calls this before rendering anything else) releases the
 // WebSocket cleanly rather than leaving it to the eviction race.
 let current = null;
 
+function setHeadline(text){
+  titleEl.textContent = text;
+  document.title = text;
+}
+
 export function disposeTerminalPage(){
   if (!current) return;
   try { hostEl.disposeTicketTerminal?.(); } catch (e) { /* already gone */ }
   current = null;
+  document.title = DEFAULT_TITLE;
 }
 
 export async function renderTerminalPage(key, provider){
-  current = { key, provider };
-  titleEl.textContent = key + " — " + (provider === "codex" ? "Codex" : "Claude");
+  const session = current = { key, provider };
+  const providerLabel = provider === "codex" ? "Codex" : "Claude";
+  // A ticket's own key + full title, so a browser tab-strip full of these is
+  // actually distinguishable at a glance — the provider suffix stays because
+  // the same ticket can have both a Claude and a Codex tab open at once.
+  setHeadline(key + " — " + providerLabel);
   hostEl.innerHTML = "";
   let data;
   try {
@@ -33,10 +46,12 @@ export async function renderTerminalPage(key, provider){
     hostEl.textContent = "Couldn't load this ticket: " + e.message;
     return;
   }
+  if (current !== session) return; // navigated away while that fetch was in flight
   if (!data){
     hostEl.textContent = "No such ticket: " + key;
     return;
   }
+  setHeadline(key + " — " + data.summary + " (" + providerLabel + ")");
   const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
   const promptText = "Work on " + key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
   window.openTicketTerminal(hostEl, key, promptText, {
