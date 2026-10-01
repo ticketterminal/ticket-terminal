@@ -98,7 +98,7 @@ export function applyMemoryGraphFilters(){
 // only ever opens a node the graph already knows about. A fresh id opens straight into that
 // same edit panel via renderMemoryGraph's own focusId param, so there's no separate "new file"
 // view to keep in sync with the real one.
-function buildAddMemoryGroup(){
+async function buildAddMemoryGroup(){
   const group = el("div","controlgroup addmemorygroup");
   const addBtn = document.createElement("button");
   addBtn.type = "button";
@@ -106,6 +106,26 @@ function buildAddMemoryGroup(){
 
   const form = el("span","addmemoryform");
   form.hidden = true;
+
+  // A directory picker only earns its keep once there's an actual choice to make — with 0 or 1
+  // configured directories, create_doc's own default (the first configured directory) is
+  // unambiguous and this stays exactly as zero-friction as before multi-directory support.
+  const settings = await apiJson("/api/settings").catch(() => null);
+  const dirs = (settings && settings.memoryDirs) || [];
+  let dirSel = null;
+  if (dirs.length > 1){
+    dirSel = document.createElement("select");
+    dirSel.className = "addmemorydirsel";
+    dirs.forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d.path;
+      const catName = state.categories.find(c => c.id === d.categoryId)?.name;
+      opt.textContent = (catName || "Unassigned") + " — " + d.path;
+      dirSel.appendChild(opt);
+    });
+    form.appendChild(dirSel);
+  }
+
   const idInput = document.createElement("input");
   idInput.type = "text";
   idInput.placeholder = "lowercase-id";
@@ -131,7 +151,9 @@ function buildAddMemoryGroup(){
     if (!id) { msg.textContent = "Enter an id."; msg.className = "settingsmsg err"; return; }
     createBtn.disabled = true;
     try {
-      const res = await apiJson("/api/memory-graph", { method: "POST", body: JSON.stringify({ id }) });
+      const body = { id };
+      if (dirSel) body.dirPath = dirSel.value;
+      const res = await apiJson("/api/memory-graph", { method: "POST", body: JSON.stringify(body) });
       if (!res.ok) throw new Error(res.error || "failed");
       idInput.value = "";
       await renderMemoryGraph(id);
@@ -204,7 +226,7 @@ export async function renderMemoryGraph(focusId){
   group.appendChild(expandBtn);
   controlsEl.appendChild(group);
 
-  controlsEl.appendChild(buildAddMemoryGroup());
+  controlsEl.appendChild(await buildAddMemoryGroup());
 
   const spacingGroup = el("div","controlgroup");
   spacingGroup.appendChild(el("span","controllabel","Spacing:"));
@@ -247,8 +269,11 @@ async function openMemoryPanel(memoryId){
   if (meta.type) memoryPanelEl.appendChild(el("div","memorypaneltype",meta.type));
   if (meta.description) memoryPanelEl.appendChild(el("div","memorypaneldesc",meta.description));
 
-  // Show categories that reference this memory
-  const usingCats = state.categories.filter(c => c.memories && c.memories.includes(memoryId));
+  // Show categories that reference this memory — either hand-listed in categories.json, or
+  // because the directory this file lives in was assigned to that category on the Settings
+  // page (meta.sourceCategoryId, see server/memory_analysis.py's read_graph).
+  const usingCats = state.categories.filter(c =>
+    (c.memories && c.memories.includes(memoryId)) || (meta.sourceCategoryId && c.id === meta.sourceCategoryId));
   if (usingCats.length){
     memoryPanelEl.appendChild(el("div","memorypanellabel","Used by"));
     const catChips = el("div","chiprow");
