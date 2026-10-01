@@ -92,7 +92,23 @@ def get_config():
         "email": jira.get("email") or os.environ.get("JIRA_EMAIL", ""),
         "api_token": jira.get("apiToken") or os.environ.get("JIRA_API_TOKEN", ""),
         "project": jira.get("projectKey") or os.environ.get("JIRA_PROJECT_KEY", "PROJ"),
+        "sync_limit": _sync_limit(jira),
     }
+
+
+DEFAULT_SYNC_LIMIT = 50
+
+
+def _sync_limit(jira: dict) -> int:
+    """How many tickets one discovery call pulls — the Settings page's syncLimit if set, else
+    JIRA_SYNC_LIMIT, else DEFAULT_SYNC_LIMIT. Never lets a bad/blank value (an empty field, a
+    typo) break discovery; it just falls back rather than raising."""
+    raw = jira.get("syncLimit") or os.environ.get("JIRA_SYNC_LIMIT", "")
+    try:
+        value = int(raw)
+        return value if value > 0 else DEFAULT_SYNC_LIMIT
+    except (TypeError, ValueError):
+        return DEFAULT_SYNC_LIMIT
 
 
 def configured() -> bool:
@@ -133,14 +149,17 @@ def discover_new_tickets(db) -> dict:
     """Pull in tickets created since the newest one already tracked — incremental, not a full
     backlog re-scan on every call, so a large project's history doesn't get re-walked on every
     sync. On a brand-new workspace (nothing tracked yet, so there is no "newest" to be
-    incremental from) this instead pulls the oldest page of the project — the original import —
-    after which every later call is genuinely incremental, 50 tickets at a time, catching up
-    through a larger backlog one sync at a time rather than all at once. New tickets get a
-    best-effort category guess from auto_categorize.classify() (an actual LLM call, not a
-    keyword heuristic), but stay marked reviewed:false with the usual "new" badge regardless of
-    whether the guess landed — a guess is not the same as human review. If classification fails
-    for any reason the ticket still gets imported with empty categories, same as before this
-    existed; a bad or missing guess must never block the import itself.
+    incremental from) this instead pulls the project's c["sync_limit"] most recently created
+    tickets — the original import, newest work first, not a crawl from the start of the
+    project's history. From then on, _newest_tracked_created_at resolves to a real timestamp
+    and every later call is genuinely incremental from there. New tickets get a best-effort
+    category guess via auto_categorize.classify_many() — one batched call for every newly
+    found ticket, not one CLI call each (that was the actual cost of "Test connection" taking
+    a long time to import even 50 tickets) — but stay marked reviewed:false with the usual
+    "new" badge regardless of whether the guess landed; a guess is not the same as human
+    review. If classification fails for any reason every ticket still gets imported with empty
+    categories, same as before this existed; a bad or missing guess must never block the
+    import itself.
 
     A 6-hour safety margin on the cutoff means this can occasionally re-see
     an already-tracked ticket; the "already tracked" check below just skips
@@ -153,10 +172,9 @@ def discover_new_tickets(db) -> dict:
     data = db.read()
     newest = _newest_tracked_created_at(data)
     # Nothing tracked yet (a brand-new workspace, before any original import) means there is no
-    # cutoff to be incremental from — pull the oldest page of the project instead of bailing out
-    # with zero tickets forever. Once this page lands, _newest_tracked_created_at resolves to a
-    # real timestamp and every later call is incremental from there, 50 at a time, same as today.
-    jql = f'project = {c["project"]} ORDER BY created ASC'
+    # cutoff to be incremental from — pull the newest page of the project (current work, not
+    # ancient history) instead of bailing out with zero tickets forever.
+    jql = f'project = {c["project"]} ORDER BY created DESC'
     if newest is not None:
         cutoff = (newest - datetime.timedelta(hours=6)).strftime("%Y-%m-%d %H:%M")
         jql = f'project = {c["project"]} AND created > "{cutoff}" ORDER BY created ASC'
@@ -166,7 +184,7 @@ def discover_new_tickets(db) -> dict:
         json={
             "jql": jql,
             "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent", "issuelinks"],
-            "maxResults": 50,
+            "maxResults": c["sync_limit"],
         },
         auth=(c["email"], c["api_token"]),
         timeout=15,
@@ -174,15 +192,26 @@ def discover_new_tickets(db) -> dict:
     resp.raise_for_status()
     issues = resp.json().get("issues", [])
 
+    new_issues = [issue for issue in issues if issue["key"] not in data["jiraTickets"]]
+    classify_candidates = [
+        {"key": issue["key"], "summary": issue.get("fields", {}).get("summary", ""),
+         "description": _adf_to_text(issue.get("fields", {}).get("description"))}
+        for issue in new_issues
+    ]
+    try:
+        guesses = auto_categorize.classify_many(classify_candidates) if classify_candidates else {}
+    except Exception:
+        # Same "never block the import" guarantee classify() used to give per-ticket — a
+        # broken/unauthenticated CLI just means every ticket lands uncategorized, not unimported.
+        guesses = {}
+
     added = []
-    for issue in issues:
+    for issue in new_issues:
         key = issue["key"]
-        if key in data["jiraTickets"]:
-            continue
         fields = issue.get("fields", {})
         summary = fields.get("summary", "")
         description = _adf_to_text(fields.get("description"))
-        guess = auto_categorize.classify(summary, description)
+        guess = guesses.get(key, [])
         db.update_ticket(key, {
             "key": key,
             "summary": summary,

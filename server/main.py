@@ -477,6 +477,7 @@ def get_settings():
             "baseUrl": jira["base_url"],
             "email": jira["email"],
             "projectKey": jira["project"],
+            "syncLimit": jira["sync_limit"],
             "apiTokenSet": bool(token),
             "apiTokenPreview": _secret_preview(token),
         },
