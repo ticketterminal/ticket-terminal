@@ -466,13 +466,13 @@ def get_config():
 def get_settings():
     """Effective config the Settings page displays — merges this workspace's settings.json
     over the .env fallback (see jira_sync.get_config / memory_analysis.
-    memory_dir_info for the precedence rule). The Jira API token is never
+    memory_dirs_info for the precedence rule). The Jira API token is never
     round-tripped back to the browser once saved — only whether one is set and
     a last-4-chars preview, matching the usual write-only-secret pattern."""
     jira = jira_sync.get_config()
     token = jira["api_token"]
     notion = notion_sync.get_config()
-    mem_info = memory_analysis.memory_dir_info()
+    mem_dirs = memory_analysis.memory_dirs_info()
     return {
         "jira": {
             "baseUrl": jira["base_url"],
@@ -495,8 +495,7 @@ def get_settings():
             "priorityProperty": notion["priority_property"],
             "lastOauthError": notion_sync.last_oauth_error,
         },
-        "memoryDir": str(mem_info["path"]),
-        "memoryDirSource": mem_info["source"],
+        "memoryDirs": [{"path": str(d["path"]), "categoryId": d["categoryId"], "source": d["source"]} for d in mem_dirs],
     }
 
 
@@ -740,7 +739,8 @@ def post_memory_doc(body: dict = Body(...)):
     existing one). See memory_analysis.create_doc."""
     memory_id = (body.get("id") or "").strip()
     try:
-        content = memory_analysis.create_doc(memory_id, body.get("description", ""), body.get("type", ""))
+        content = memory_analysis.create_doc(
+            memory_id, body.get("description", ""), body.get("type", ""), body.get("dirPath") or None)
         return {"ok": True, "content": content}
     except FileExistsError:
         return {"ok": False, "error": "a memory file with that id already exists"}
