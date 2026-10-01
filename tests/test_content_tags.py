@@ -144,7 +144,7 @@ class JiraContentTagSyncTests(unittest.TestCase):
                 "jiraPriority": "Medium", "categories": ["operations"],
             }
         })
-        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS", "sync_limit": 50}
 
     def sync(self, jira_issue, generated):
         generate_options = {"side_effect": generated} if isinstance(generated, Exception) else {"return_value": generated}
@@ -214,7 +214,7 @@ class JiraContentTagSyncTests(unittest.TestCase):
 class JiraDiscoverParentKeyTests(unittest.TestCase):
     def setUp(self):
         self.db = FakeDB({})
-        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS", "sync_limit": 50}
         self.db.data["jiraTickets"]["OPS-0"] = {"key": "OPS-0", "createdAt": "2026-01-01T00:00:00+00:00"}
 
     def discover(self, jira_issue):
@@ -222,7 +222,7 @@ class JiraDiscoverParentKeyTests(unittest.TestCase):
              patch.object(jira_sync, "get_config", return_value=self.config), \
              patch.object(jira_sync, "auto_categorize") as auto_categorize, \
              patch.object(jira_sync.requests, "post", return_value=JiraResponse([jira_issue])):
-            auto_categorize.classify.return_value = []
+            auto_categorize.classify_many.return_value = {}
             return jira_sync.discover_new_tickets(self.db)
 
     def test_a_newly_discovered_subtask_gets_its_parent_key(self):
@@ -259,14 +259,14 @@ class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
 
     def setUp(self):
         self.db = FakeDB({})
-        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS", "sync_limit": 50}
 
     def discover(self, jira_issues):
         with patch.object(jira_sync, "configured", return_value=True), \
              patch.object(jira_sync, "get_config", return_value=self.config), \
              patch.object(jira_sync, "auto_categorize") as auto_categorize, \
              patch.object(jira_sync.requests, "post", return_value=JiraResponse(jira_issues)) as post:
-            auto_categorize.classify.return_value = []
+            auto_categorize.classify_many.return_value = {}
             result = jira_sync.discover_new_tickets(self.db)
             return result, post
 
@@ -275,8 +275,14 @@ class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["added"], ["OPS-1"])
         self.assertIn("OPS-1", self.db.data["jiraTickets"])
         jql = post.call_args.kwargs["json"]["jql"]
-        self.assertNotIn("created >", jql, "no cutoff to be incremental from yet — pulls the project's oldest page instead")
+        self.assertNotIn("created >", jql, "no cutoff to be incremental from yet — pulls the project's newest page instead")
         self.assertIn("project = OPS", jql)
+        self.assertIn("ORDER BY created DESC", jql, "newest tickets first, not a crawl from the start of the project's history")
+
+    def test_initial_import_uses_the_configured_sync_limit(self):
+        self.config["sync_limit"] = 10
+        _, post = self.discover([issue()])
+        self.assertEqual(post.call_args.kwargs["json"]["maxResults"], 10)
 
     def test_second_call_is_incremental_from_the_first_imported_ticket(self):
         first = issue()
@@ -285,6 +291,29 @@ class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
         _, post = self.discover([])
         jql = post.call_args.kwargs["json"]["jql"]
         self.assertIn("created >", jql, "now that something is tracked, the next call goes back to incremental")
+        self.assertIn("ORDER BY created ASC", jql, "incremental catch-up still walks forward in time, oldest-missed first")
+
+    def test_classification_is_one_batched_call_not_one_per_ticket(self):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([issue(), {**issue(), "key": "OPS-2"}])):
+            auto_categorize.classify_many.return_value = {"OPS-1": ["security"], "OPS-2": []}
+            jira_sync.discover_new_tickets(self.db)
+            auto_categorize.classify_many.assert_called_once()
+            auto_categorize.classify.assert_not_called()
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["categories"], ["security"])
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-2"]["categories"], [])
+
+    def test_classification_failure_still_imports_every_ticket_uncategorized(self):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([issue()])):
+            auto_categorize.classify_many.side_effect = RuntimeError("claude not authenticated")
+            result = jira_sync.discover_new_tickets(self.db)
+        self.assertEqual(result["added"], ["OPS-1"])
+        self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["categories"], [])
 
 
 if __name__ == "__main__":
