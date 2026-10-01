@@ -56,17 +56,20 @@ function buildTopRow(data){
   titleText.addEventListener("click", () => expandBtn.click());
   titleGroup.appendChild(titleText);
 
-  const link = document.createElement("a");
-  link.className = "ticketlinkicon";
-  link.href = data.url || jiraHref(data.key) || "#";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  const trackerName = trackerOf(data);
-  link.title = "Open in " + trackerName;
-  link.setAttribute("aria-label", "Open in " + trackerName);
-  link.textContent = "↗";
-  link.addEventListener("click", (e) => e.stopPropagation());
-  titleGroup.appendChild(link);
+  // Demo tickets (see demo-data.js) have no real tracker issue to link to.
+  if (!data.isDemo){
+    const link = document.createElement("a");
+    link.className = "ticketlinkicon";
+    link.href = data.url || jiraHref(data.key) || "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    const trackerName = trackerOf(data);
+    link.title = "Open in " + trackerName;
+    link.setAttribute("aria-label", "Open in " + trackerName);
+    link.textContent = "↗";
+    link.addEventListener("click", (e) => e.stopPropagation());
+    titleGroup.appendChild(link);
+  }
 
   top.appendChild(titleGroup);
 
@@ -176,6 +179,7 @@ function buildStatusProgress(statusControl, trainStatus){
 
 function buildBadgeRow(data, doc, dbRef, row){
   const badges = el("div","badgerow");
+  if (data.isDemo) badges.appendChild(el("span","badge demobadge","DEMO"));
   if (data.issueType && data.issueType !== "Task") badges.appendChild(el("span","badge epicbadge",data.issueType.toUpperCase()));
   if (!data.reviewed) badges.appendChild(el("span","badge new","new"));
 
@@ -262,8 +266,8 @@ function buildBadgeRow(data, doc, dbRef, row){
       prioSel.style.color = (prioSel.value === "Medium" || prioSel.value === "Low") ? "#fff" : "#1a1a1a";
     };
     paintPrio();
-    prioSel.title = "Priority — changes push straight to " + tracker;
-    if (data.source === "notion" && !state.notionPriorityOptions.length) prioSel.disabled = true; // no mapped priority column to push to
+    prioSel.title = data.isDemo ? "Demo ticket — not editable" : "Priority — changes push straight to " + tracker;
+    if (data.isDemo || (data.source === "notion" && !state.notionPriorityOptions.length)) prioSel.disabled = true; // no mapped priority column to push to, or no real ticket behind it
     prioSel.addEventListener("change", async () => {
       const newVal = prioSel.value;
       const prevVal = data.jiraPriority;
@@ -390,7 +394,7 @@ function buildTagRow(data, doc, dbRef, cats){
   categorySummary.title = "Categories control board lanes; content tags describe the ticket";
   tagrow.appendChild(categorySummary);
 
-  if (dbRef){
+  if (dbRef && !data.isDemo){
     const editor = el("span", "categoryedit");
     const select = document.createElement("select");
     select.setAttribute("aria-label", "Edit categories for " + doc.id);
@@ -551,10 +555,15 @@ function buildExpandPanel(data, doc, dbRef){
   mrInput.className = "mrlinkinput";
   mrInput.placeholder = "https://gitlab.com/.../merge_requests/...";
   mrInput.value = data.mrLink || "";
-  let mrPrev = mrInput.value;
-  mrInput.addEventListener("blur", () => {
-    if (mrInput.value !== mrPrev){ mrPrev = mrInput.value; touch(dbRef, doc.id, {mrLink: mrInput.value.trim()}); }
-  });
+  if (data.isDemo){
+    mrInput.disabled = true;
+    mrInput.placeholder = "Demo ticket — not editable";
+  } else {
+    let mrPrev = mrInput.value;
+    mrInput.addEventListener("blur", () => {
+      if (mrInput.value !== mrPrev){ mrPrev = mrInput.value; touch(dbRef, doc.id, {mrLink: mrInput.value.trim()}); }
+    });
+  }
   mrWrap.appendChild(mrInput);
   if (data.mrLink){
     const mrOpen = document.createElement("a");
@@ -602,6 +611,11 @@ function buildExpandPanel(data, doc, dbRef){
   noteInput.type = "text"; noteInput.placeholder = "Add a note…"; noteInput.maxLength = 500;
   const noteBtn = document.createElement("button");
   noteBtn.type = "submit"; noteBtn.textContent = "Add";
+  if (data.isDemo){
+    noteInput.disabled = true;
+    noteBtn.disabled = true;
+    noteInput.placeholder = "Demo ticket — notes aren't saved";
+  }
   noteForm.appendChild(noteInput); noteForm.appendChild(noteBtn);
   noteForm.addEventListener("submit", async (e) => {
     e.preventDefault();

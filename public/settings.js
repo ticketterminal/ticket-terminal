@@ -169,6 +169,8 @@ async function renderJiraForm(){
     return;
   }
 
+  jiraFormEl.appendChild(el("p","sub","Connect your Jira project and the board starts syncing tickets every 10 minutes — title, status, priority, and content tags. Nothing here is sent anywhere except your own Jira site."));
+
   const baseUrlInput = document.createElement("input");
   baseUrlInput.type = "url"; baseUrlInput.placeholder = "https://your-domain.atlassian.net";
   baseUrlInput.value = settings.jira.baseUrl || "";
