@@ -5,10 +5,11 @@ own per-project memory location (~/.claude/projects/<sanitized-cwd>/memory/), re
 convenience since Claude Code's built-in memory tool already writes there for free and every
 ticket terminal already has live read/write access to it (confirmed empirically: a fresh,
 unrelated `claude -p` call in that cwd can recall a fact from these files with no extra wiring)
-— but it's a plain folder, fully overridable via the Settings page's memoryDir (see
-memory_dir_info below), and not tied to Claude in format or in who may read/write it. This
-module reads that folder to build a graph view, and counts how a ticket's own session actually
-used it across whichever agent vendor ran that ticket (see all_ticket_memory_usage).
+— but it's a plain folder, fully overridable via the Settings page, which can also point at
+several such folders at once, each optionally tied to one category (see memory_dirs_info
+below), and not tied to Claude in format or in who may read/write it. This module reads those
+folders to build a graph view, and counts how a ticket's own session actually used memory
+across whichever agent vendor ran that ticket (see all_ticket_memory_usage).
 """
 import glob
 import json
@@ -30,26 +31,53 @@ def claude_project_dir(cwd: str) -> Path:
 DEFAULT_WORKDIR = os.environ.get("WMP_DEFAULT_WORKDIR") or str(Path.home())
 
 
-def memory_dir_info() -> dict:
-    """Where the memory corpus is read from, and why — precedence is: the
-    Settings page's memoryDir (data/settings.json) if set, else WMP_MEMORY_DIR
-    (a dedicated env var, independent of WMP_DEFAULT_WORKDIR — pointing the
-    embedded terminal at a workdir and pointing this feature at a knowledge-
-    base folder are different concerns), else today's default of deriving it
-    from Claude Code's own per-workdir memory convention. Re-read on every
-    call (not cached at import) so a Settings-page save takes effect
+def memory_dirs_info() -> list[dict]:
+    """Every directory the memory corpus is read from, and why — in precedence/priority order
+    (the first directory wins any same-id collision across directories, see read_graph).
+    Precedence: a non-empty Settings-page memoryDirs list (data/settings.json), else the
+    legacy single-directory memoryDir setting (one implicit, unassigned entry — so an install
+    configured before multi-directory support needs no migration), else WMP_MEMORY_DIR (a
+    dedicated env var, independent of WMP_DEFAULT_WORKDIR — pointing the embedded terminal at a
+    workdir and pointing this feature at a knowledge-base folder are different concerns), else
+    today's default of deriving one from Claude Code's own per-workdir memory convention.
+    Re-read on every call (not cached at import) so a Settings-page save takes effect
     immediately."""
-    from_settings = (settings_store.read().get("memoryDir") or "").strip()
+    settings = settings_store.read()
+    configured = settings.get("memoryDirs") or []
+    dirs = [
+        {"path": Path(d["path"]), "categoryId": d.get("categoryId") or "", "source": "settings"}
+        for d in configured if (d.get("path") or "").strip()
+    ]
+    if dirs:
+        return dirs
+    from_settings = (settings.get("memoryDir") or "").strip()
     if from_settings:
-        return {"path": Path(from_settings), "source": "settings"}
+        return [{"path": Path(from_settings), "categoryId": "", "source": "settings"}]
     from_env = os.environ.get("WMP_MEMORY_DIR", "").strip()
     if from_env:
-        return {"path": Path(from_env), "source": "env"}
-    return {"path": claude_project_dir(DEFAULT_WORKDIR) / "memory", "source": "default"}
+        return [{"path": Path(from_env), "categoryId": "", "source": "env"}]
+    return [{"path": claude_project_dir(DEFAULT_WORKDIR) / "memory", "categoryId": "", "source": "default"}]
+
+
+def memory_dir_info() -> dict:
+    """Back-compat single-directory accessor for anything that only ever wanted one path —
+    the first configured directory."""
+    return memory_dirs_info()[0]
 
 
 def _memory_dir() -> Path:
     return memory_dir_info()["path"]
+
+
+def _locate(memory_id: str) -> tuple[Path | None, str | None]:
+    """The (path, categoryId) of whichever configured directory holds <memory_id>.md, by
+    filename — first configured directory that has it wins. (None, None) if it doesn't exist
+    in any of them yet."""
+    for d in memory_dirs_info():
+        path = d["path"] / f"{memory_id}.md"
+        if path.exists():
+            return path, d["categoryId"]
+    return None, None
 
 
 _SKIP_FILES = {"MEMORY.md", "README.md"}
@@ -72,25 +100,33 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def read_graph() -> dict:
-    """{nodes: [{id, description, type}], edges: [{from, to}]} — nodes are every memory file's
-    own frontmatter `name`/`description`/`metadata.type`; edges are [[wikilink]] references
-    found in each doc's body, deduped, and only kept when the target is a real node (a stale
-    or typo'd link just doesn't render as an edge, rather than erroring)."""
+    """{nodes: [{id, description, type, sourceCategoryId}], edges: [{from, to}]} — nodes are
+    every memory file's own frontmatter `name`/`description`/`metadata.type`, unioned across
+    every configured directory (memory_dirs_info); a same-id file in two directories is not an
+    error, the first configured directory just wins, same as a real merged folder would.
+    sourceCategoryId is "" unless that node's owning directory was assigned a category on the
+    Settings page — see server/main.py's /api/memory-graph and public/settings.js. Edges are
+    [[wikilink]] references found in each doc's body, deduped, and only kept when the target is
+    a real node (a stale or typo'd link just doesn't render as an edge, rather than erroring)."""
     nodes = []
     bodies = {}
     ids = set()
-    for path in sorted(_memory_dir().glob("*.md")):
-        if path.name in _SKIP_FILES:
-            continue
-        meta, body = _parse_frontmatter(path.read_text())
-        node_id = meta.get("name") or path.stem
-        ids.add(node_id)
-        bodies[node_id] = body
-        nodes.append({
-            "id": node_id,
-            "description": meta.get("description", ""),
-            "type": (meta.get("metadata") or {}).get("type", ""),
-        })
+    for d in memory_dirs_info():
+        for path in sorted(d["path"].glob("*.md")):
+            if path.name in _SKIP_FILES:
+                continue
+            meta, body = _parse_frontmatter(path.read_text())
+            node_id = meta.get("name") or path.stem
+            if node_id in ids:
+                continue  # first configured directory wins a same-id collision
+            ids.add(node_id)
+            bodies[node_id] = body
+            nodes.append({
+                "id": node_id,
+                "description": meta.get("description", ""),
+                "type": (meta.get("metadata") or {}).get("type", ""),
+                "sourceCategoryId": d["categoryId"],
+            })
     seen = set()
     edges = []
     for node_id, body in bodies.items():
@@ -109,31 +145,39 @@ def read_graph() -> dict:
 def read_doc(memory_id: str) -> str | None:
     if not _ID_RE.match(memory_id):
         return None
-    path = _memory_dir() / f"{memory_id}.md"
-    return path.read_text() if path.exists() else None
+    path, _ = _locate(memory_id)
+    return path.read_text() if path else None
 
 
 def write_doc(memory_id: str, content: str) -> None:
     if not _ID_RE.match(memory_id):
         raise ValueError("invalid memory id")
-    path = _memory_dir() / f"{memory_id}.md"
-    if not path.exists():
+    path, _ = _locate(memory_id)
+    if not path:
         raise FileNotFoundError(memory_id)
     path.write_text(content)
 
 
-def create_doc(memory_id: str, description: str = "", mem_type: str = "") -> str:
+def create_doc(memory_id: str, description: str = "", mem_type: str = "", target_dir: str | None = None) -> str:
     """Starts a brand-new memory file with just enough frontmatter to show up in the graph —
     the only way one gets created at all today; write_doc (above) deliberately refuses to touch
     a path that doesn't already exist. yaml.safe_dump (not hand-built frontmatter strings) so a
-    user-typed description with a colon or quote in it can't corrupt the YAML block."""
+    user-typed description with a colon or quote in it can't corrupt the YAML block.
+
+    target_dir picks which configured directory (by its path string, as returned by
+    memory_dirs_info/GET /api/settings) the file is created in — the first configured
+    directory when omitted. The id must be free across *every* configured directory, not just
+    the target one, so the same id is never ambiguous once more than one directory is in play."""
     if not _ID_RE.match(memory_id):
         raise ValueError("invalid memory id — use lowercase letters, numbers, and hyphens only")
-    memory_dir = _memory_dir()
-    path = memory_dir / f"{memory_id}.md"
-    if path.exists():
+    if _locate(memory_id)[0] is not None:
         raise FileExistsError(memory_id)
-    memory_dir.mkdir(parents=True, exist_ok=True)
+    dirs = memory_dirs_info()
+    chosen = next((d["path"] for d in dirs if str(d["path"]) == target_dir), None) if target_dir else None
+    if chosen is None:
+        chosen = dirs[0]["path"]
+    chosen.mkdir(parents=True, exist_ok=True)
+    path = chosen / f"{memory_id}.md"
     meta = {"name": memory_id, "description": description or ""}
     if mem_type:
         meta["metadata"] = {"type": mem_type}
@@ -161,18 +205,23 @@ def splice_diagram(body: str, mermaid_source: str) -> str:
 
 
 def _memory_ids() -> set[str]:
-    return {p.stem for p in _memory_dir().glob("*.md") if p.name not in _SKIP_FILES}
+    ids = set()
+    for d in memory_dirs_info():
+        ids |= {p.stem for p in d["path"].glob("*.md") if p.name not in _SKIP_FILES}
+    return ids
 
 
 def memory_file_stats() -> dict[str, dict]:
     """{memoryId: {"chars": int}} — a rough size for every real memory file, for spotting
     docs that are both bloated and heavily read (see workflow_insights.py's memory-structure
-    section, and all_ticket_memory_usage above for the read-count side of that)."""
+    section, and all_ticket_memory_usage above for the read-count side of that). First
+    configured directory wins a same-stem collision, same as read_graph."""
     stats = {}
-    for path in _memory_dir().glob("*.md"):
-        if path.name in _SKIP_FILES:
-            continue
-        stats[path.stem] = {"chars": len(path.read_text())}
+    for d in memory_dirs_info():
+        for path in d["path"].glob("*.md"):
+            if path.name in _SKIP_FILES:
+                continue
+            stats.setdefault(path.stem, {"chars": len(path.read_text())})
     return stats
 
 
@@ -185,7 +234,7 @@ def session_memory_usage(cwd: str, session_id: str) -> dict[str, int]:
     if not log_path.exists():
         return {}
     ids = _memory_ids()
-    memory_dir = _memory_dir()
+    memory_dirs = [d["path"] for d in memory_dirs_info()]
     counts: dict[str, int] = {}
     with open(log_path) as f:
         for line in f:
@@ -203,7 +252,7 @@ def session_memory_usage(cwd: str, session_id: str) -> dict[str, int]:
                     continue
                 file_path = (block.get("input") or {}).get("file_path", "")
                 p = Path(file_path)
-                if p.parent == memory_dir and p.stem in ids:
+                if p.parent in memory_dirs and p.stem in ids:
                     counts[p.stem] = counts.get(p.stem, 0) + 1
     return counts
 
@@ -226,12 +275,12 @@ def codex_session_memory_usage(session_id: str) -> dict[str, int]:
     if not log_path or not log_path.exists():
         return {}
     ids = _memory_ids()
-    memory_dir = _memory_dir()
+    memory_dirs = [d["path"] for d in memory_dirs_info()]
     counts: dict[str, int] = {}
     with open(log_path) as f:
         for line in f:
             for memory_id in ids:
-                if str(memory_dir / f"{memory_id}.md") in line:
+                if any(str(d / f"{memory_id}.md") in line for d in memory_dirs):
                     counts[memory_id] = counts.get(memory_id, 0) + 1
     return counts
 
