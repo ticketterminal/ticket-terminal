@@ -1,0 +1,8 @@
+.venv/
+.git/
+data/*
+!data/*.example.json
+node_modules/
+tests/
+docs/
+.env

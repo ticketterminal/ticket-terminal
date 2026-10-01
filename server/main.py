@@ -10,6 +10,13 @@ SECURITY: bind to 127.0.0.1 only (see the __main__ block). This process can
 spawn a real shell with the user's own permissions; it must never be reachable
 from the network. No auth is added on top of that for v1 — localhost-only IS
 the security boundary, by design, not an oversight.
+
+WMP_HOST overrides the bind address, default unchanged. The one legitimate use
+is Docker: a container's own 127.0.0.1 is a namespace Docker's -p/ports proxy
+can't reach, so the Dockerfile/compose setup binds this to 0.0.0.0 *inside* the
+container and moves the real boundary to the host-side publish instead
+(`-p 127.0.0.1:4173:4173`, never a bare `-p 4173:4173`) — see the README's
+Docker section. Outside a container, leave this unset.
 """
 import asyncio
 import datetime
@@ -1358,4 +1365,4 @@ def index():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=4173)
+    uvicorn.run(app, host=os.environ.get("WMP_HOST", "127.0.0.1"), port=4173)
