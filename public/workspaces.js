@@ -175,7 +175,9 @@ export async function loadWorkspaceBoard(afterCategories){
     const [catsRes, configRes] = await Promise.all([apiJson("/api/categories"), apiJson("/api/config")]);
     state.categories = Array.isArray(catsRes) ? catsRes : [];
     state.jiraBaseUrl = (configRes && configRes.jiraBaseUrl) || "";
-  } catch (error) { /* leave categories/jiraBaseUrl empty — board renders with no lanes/no Jira links */ }
+    state.jiraConfigured = !!(configRes && configRes.jiraConfigured);
+    state.notionConfigured = !!(configRes && configRes.notionConfigured);
+  } catch (error) { /* leave categories/jiraBaseUrl/*Configured at their defaults — board renders with no lanes/no Jira links */ }
   buildCategoryUI();
   if (afterCategories) afterCategories();
 

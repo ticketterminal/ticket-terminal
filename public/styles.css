@@ -231,6 +231,8 @@
   .badge.ro{background:transparent;border:1px dashed var(--line);color:var(--ink-muted);}
   .badge.new{background:var(--accent);color:var(--accent-ink);border:none;font-weight:600;}
   .badge.epicbadge{background:#7A6FB0;color:#fff;border:none;font-weight:700;}
+  .badge.demobadge{background:none;border:1px dashed var(--ink-muted);color:var(--ink-muted);font-weight:700;}
+  .demoterminalnote{font-size:12.5px;color:var(--ink-muted);margin:0;}
   .epicchildrenwrap{margin:2px 0 2px 16px;}
   .epicchildrenwrap>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;padding:6px 0;font-family:"IBM Plex Mono",monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-muted);}
   .epicchildrenwrap>summary::-webkit-details-marker{display:none;}
@@ -496,6 +498,12 @@
 .categorytoolbar,.categorynotice{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;}
 .categorytoolbar .categorytoggle{margin-right:2px;}
 .categorynotice{padding:14px 18px;border:1px solid var(--accent);background:var(--surface);border-radius:4px;justify-content:space-between;}
+.demonotice{border-color:var(--partial);}
+.gettingstarted .sectionhead{margin-bottom:6px;}
+.gettingstartedlist{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px;}
+.gettingstartedlist li.done{color:var(--covered);}
+.gettingstartedbtn{border:none;background:none;padding:0;margin:0;font:inherit;color:var(--accent);cursor:pointer;text-align:left;}
+.gettingstartedbtn:hover{text-decoration:underline;}
 .categorytoolbar[hidden],.categorynotice[hidden]{display:none;}
 .lanedrag{border:0;background:transparent;color:var(--ink-muted);cursor:grab;font-size:22px;line-height:1;padding:4px;touch-action:none;}
 .lanedrag:focus-visible{outline:2px solid var(--accent);}
