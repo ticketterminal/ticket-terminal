@@ -39,7 +39,7 @@ const body=(url,opts)=>{
   if(url.includes('sync-if-stale')) return {ok:true,syncStarted:true,lastSyncAt:''};
   if(url.startsWith('/api/workspaces')) return opts&&opts.method==='POST'
     ? {ok:true,workspace:{slug:'ticket-terminal',name:'Ticket Terminal',createdAt:'2026-09-15'}} : registry;
-  if(url.startsWith('/api/settings')) return {jira:{},notion:{connected:false},memoryDir:'/tmp/memory',memoryDirSource:'default'};
+  if(url.startsWith('/api/settings')) return {jira:{},notion:{connected:false},memoryDirs:[{path:'/tmp/memory',categoryId:'',source:'default'}]};
   if(url.startsWith('/api/categories')) return categories;
   if(url.startsWith('/api/config')) return {jiraBaseUrl:''};
   if(url.startsWith('/api/team-options')) return [];
