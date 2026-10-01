@@ -130,16 +130,17 @@ def _newest_tracked_created_at(data):
 
 
 def discover_new_tickets(db) -> dict:
-    """Pull in tickets created since the newest one already tracked —
-    deliberately NOT a full backlog re-scan: whatever predates your own
-    original import was left out on purpose, and this must never reach back
-    into that. New tickets get a best-effort category guess from
-    auto_categorize.classify() (an actual LLM call, not a keyword heuristic),
-    but stay marked reviewed:false with the usual "new" badge regardless of
-    whether the guess landed — a guess is not the same as human review. If
-    classification fails for any reason the ticket still gets imported with
-    empty categories, same as before this existed; a bad or missing guess
-    must never block the import itself.
+    """Pull in tickets created since the newest one already tracked — incremental, not a full
+    backlog re-scan on every call, so a large project's history doesn't get re-walked on every
+    sync. On a brand-new workspace (nothing tracked yet, so there is no "newest" to be
+    incremental from) this instead pulls the oldest page of the project — the original import —
+    after which every later call is genuinely incremental, 50 tickets at a time, catching up
+    through a larger backlog one sync at a time rather than all at once. New tickets get a
+    best-effort category guess from auto_categorize.classify() (an actual LLM call, not a
+    keyword heuristic), but stay marked reviewed:false with the usual "new" badge regardless of
+    whether the guess landed — a guess is not the same as human review. If classification fails
+    for any reason the ticket still gets imported with empty categories, same as before this
+    existed; a bad or missing guess must never block the import itself.
 
     A 6-hour safety margin on the cutoff means this can occasionally re-see
     an already-tracked ticket; the "already tracked" check below just skips
@@ -151,14 +152,19 @@ def discover_new_tickets(db) -> dict:
 
     data = db.read()
     newest = _newest_tracked_created_at(data)
-    if newest is None:
-        return {"found": 0, "added": []}
-    cutoff = (newest - datetime.timedelta(hours=6)).strftime("%Y-%m-%d %H:%M")
+    # Nothing tracked yet (a brand-new workspace, before any original import) means there is no
+    # cutoff to be incremental from — pull the oldest page of the project instead of bailing out
+    # with zero tickets forever. Once this page lands, _newest_tracked_created_at resolves to a
+    # real timestamp and every later call is incremental from there, 50 at a time, same as today.
+    jql = f'project = {c["project"]} ORDER BY created ASC'
+    if newest is not None:
+        cutoff = (newest - datetime.timedelta(hours=6)).strftime("%Y-%m-%d %H:%M")
+        jql = f'project = {c["project"]} AND created > "{cutoff}" ORDER BY created ASC'
 
     resp = requests.post(
         f"{c['base_url']}/rest/api/3/search/jql",
         json={
-            "jql": f'project = {c["project"]} AND created > "{cutoff}" ORDER BY created ASC',
+            "jql": jql,
             "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent", "issuelinks"],
             "maxResults": 50,
         },

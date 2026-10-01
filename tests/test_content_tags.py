@@ -250,5 +250,42 @@ class JiraDiscoverParentKeyTests(unittest.TestCase):
         ])
 
 
+class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
+    """A workspace with zero tracked tickets (first "Test connection" click on a fresh
+    install) must still actually pull tickets in — regression test for a bug where
+    _newest_tracked_created_at returning None made discover_new_tickets bail out with
+    {"added": []} before ever calling Jira, so a brand-new workspace could never import
+    anything no matter how correct its Jira credentials were."""
+
+    def setUp(self):
+        self.db = FakeDB({})
+        self.config = {"base_url": "https://jira.example", "email": "me@example.com", "api_token": "secret", "project": "OPS"}
+
+    def discover(self, jira_issues):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse(jira_issues)) as post:
+            auto_categorize.classify.return_value = []
+            result = jira_sync.discover_new_tickets(self.db)
+            return result, post
+
+    def test_zero_tracked_tickets_still_queries_jira_and_imports_the_result(self):
+        result, post = self.discover([issue()])
+        self.assertEqual(result["added"], ["OPS-1"])
+        self.assertIn("OPS-1", self.db.data["jiraTickets"])
+        jql = post.call_args.kwargs["json"]["jql"]
+        self.assertNotIn("created >", jql, "no cutoff to be incremental from yet — pulls the project's oldest page instead")
+        self.assertIn("project = OPS", jql)
+
+    def test_second_call_is_incremental_from_the_first_imported_ticket(self):
+        first = issue()
+        first["fields"]["created"] = "2026-01-01T00:00:00+00:00"
+        self.discover([first])  # OPS-1 now tracked, with a real createdAt
+        _, post = self.discover([])
+        jql = post.call_args.kwargs["json"]["jql"]
+        self.assertIn("created >", jql, "now that something is tracked, the next call goes back to incremental")
+
+
 if __name__ == "__main__":
     unittest.main()
