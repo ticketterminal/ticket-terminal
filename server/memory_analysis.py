@@ -122,6 +122,27 @@ def write_doc(memory_id: str, content: str) -> None:
     path.write_text(content)
 
 
+def create_doc(memory_id: str, description: str = "", mem_type: str = "") -> str:
+    """Starts a brand-new memory file with just enough frontmatter to show up in the graph —
+    the only way one gets created at all today; write_doc (above) deliberately refuses to touch
+    a path that doesn't already exist. yaml.safe_dump (not hand-built frontmatter strings) so a
+    user-typed description with a colon or quote in it can't corrupt the YAML block."""
+    if not _ID_RE.match(memory_id):
+        raise ValueError("invalid memory id — use lowercase letters, numbers, and hyphens only")
+    memory_dir = _memory_dir()
+    path = memory_dir / f"{memory_id}.md"
+    if path.exists():
+        raise FileExistsError(memory_id)
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"name": memory_id, "description": description or ""}
+    if mem_type:
+        meta["metadata"] = {"type": mem_type}
+    frontmatter = yaml.safe_dump(meta, sort_keys=False).strip()
+    content = f"---\n{frontmatter}\n---\n\n"
+    path.write_text(content)
+    return content
+
+
 def extract_diagram(body: str) -> str | None:
     """The Mermaid source inside a ```mermaid fenced block in this memory's body, per the
     diagram convention in MEMORY_FORMAT.md — None when the memory has no diagram yet."""

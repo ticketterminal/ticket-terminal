@@ -359,6 +359,8 @@
   .memorycontrols .typefilter{font-size:11px;padding:4px 8px;border:1px dashed var(--line);border-radius:3px;background:transparent;color:inherit;cursor:pointer;}
   .memorycontrols .typefilter.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
   .memorycontrols .spacingslider{width:130px;accent-color:var(--accent);}
+  .memorycontrols .addmemoryform{display:flex;gap:6px;align-items:center;}
+  .memorycontrols .addmemoryinput{font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:inherit;width:160px;}
   .memorywrap{display:flex;gap:16px;height:min(72vh,720px);margin-top:12px;}
   .memorycanvas{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);}
   .memorypanel{flex:0 0 340px;border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
