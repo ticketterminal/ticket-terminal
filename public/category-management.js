@@ -32,6 +32,7 @@ function message(text, error=false){
   if (host){ host.textContent=text; host.className='settingsmsg '+(error?'err':'ok'); }
 }
 function updateNotice(){
+  updateGettingStarted(); // independent of this banner's own hidden state — see below
   const host=document.getElementById('categoryNotice');
   if (!host || !current) return;
   const count=current.reviews.reduce((n,r)=>n+r.suggestions.filter(s=>s.status==='pending').length,0);
@@ -39,6 +40,33 @@ function updateNotice(){
   if (host.hidden) return;
   host.appendChild(el('span',null,!current.onboarded?'Make this board fit your role.':count?`${count} category suggestion${count===1?'':'s'} ready to review.`:'Category scan needs attention.'));
   host.appendChild(button(!current.onboarded?'Choose work role':'Review categories',()=>{ location.hash=routeHash('#/settings'); }));
+}
+// A brand-new install's path from "just installed" to "actually using it" —
+// role + tracker are each a real, checkable step; CLI sign-in is not
+// (terminal-providers only confirms a binary is on PATH, not that it's signed
+// in — see server/main.py's agent_executable), so that line stays static
+// instructions rather than a fake checkmark.
+function updateGettingStarted(){
+  const host=document.getElementById('gettingStarted');
+  const list=document.getElementById('gettingStartedList');
+  if (!host || !list || !current) return;
+  const trackerConnected=state.jiraConfigured || state.notionConfigured;
+  let dismissed=false;
+  try { dismissed=localStorage.getItem('wmp.hideGettingStarted')==='1'; } catch(e){}
+  host.hidden=dismissed || (current.onboarded && trackerConnected);
+  if (host.hidden) return;
+  list.replaceChildren();
+  [
+    {label:'Pick your work role', done:current.onboarded},
+    {label:'Connect Jira or Notion', done:trackerConnected},
+  ].forEach(item => {
+    const li=el('li', item.done?'done':null);
+    if (item.done){ li.textContent='✓ '+item.label; }
+    else { li.appendChild(button('☐ '+item.label, ()=>{ location.hash=routeHash('#/settings'); }, 'gettingstartedbtn')); }
+    list.appendChild(li);
+  });
+  const cliItem=el('li', null, '○ Sign in to the claude or codex CLI, then open any ticket to start a session.');
+  list.appendChild(cliItem);
 }
 async function applyResult(result){
   current=result;
@@ -167,6 +195,11 @@ export async function renderCategoryManagement(){
   renderReviews();renderHistory();
 }
 export async function initCategoryManagement(){
+  const hideBtn=document.getElementById('hideGettingStartedBtn');
+  if (hideBtn) hideBtn.addEventListener('click', () => {
+    try { localStorage.setItem('wmp.hideGettingStarted','1'); } catch(e){}
+    updateGettingStarted();
+  });
   try{
     await refreshCategoryManagement();
     if(!current.onboarded && !current.existingSetup){

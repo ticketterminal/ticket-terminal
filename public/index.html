@@ -21,14 +21,20 @@
     </div>
 
     <div class="categorynotice" id="categoryNotice" hidden></div>
+    <details class="sectiondetails gettingstarted" id="gettingStarted" hidden>
+      <summary class="sectionhead"><span>Getting started</span></summary>
+      <ul class="gettingstartedlist" id="gettingStartedList"></ul>
+      <button type="button" class="refreshbtn" id="hideGettingStartedBtn">Hide this</button>
+    </details>
+    <div class="categorynotice demonotice" id="demoNotice" hidden></div>
     <div class="refreshbar">
       <span class="workspacewrap" id="workspaceWrap" hidden>
         <select id="workspaceSel" title="Which workspace this board is showing — workspaces are switched, never merged" aria-label="Workspace"></select>
       </span>
       <button type="button" class="refreshbtn" id="refreshBtn">⟳ Refresh</button>
       <span class="refreshtime" id="refreshTime">loading…</span>
-      <button type="button" class="refreshbtn" id="memoryGraphBtn" style="margin-left:auto;">🕸 Memory graph</button>
-      <button type="button" class="refreshbtn" id="insightsBtn">📊 Insights</button>
+      <button type="button" class="refreshbtn" id="memoryGraphBtn" style="margin-left:auto;" title="The shared knowledge base — markdown notes any agent session can read and write">🕸 Memory graph</button>
+      <button type="button" class="refreshbtn" id="insightsBtn" title="Cost, model, and caching breakdown across every Claude/Codex session">📊 Insights</button>
       <button type="button" class="refreshbtn" id="settingsBtn">⚙ Settings</button>
     </div>
 

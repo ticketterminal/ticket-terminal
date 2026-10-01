@@ -22,6 +22,14 @@ export const state = {
   // Populated once at init() from GET /api/config. jiraHref() returns null (no
   // link) until this resolves, and forever if Jira isn't configured.
   jiraBaseUrl: "",
+  // Same fetch — whether either tracker is actually set up. Drives demo-mode
+  // (polling.js) and the getting-started checklist, not just link-building.
+  jiraConfigured: false,
+  notionConfigured: false,
+  // Set by reloadBoard() (polling.js) — true for exactly as long as the board
+  // has no real tickets and neither tracker is configured. Read by the demo
+  // banner (lanes.js).
+  showingDemoDocs: false,
 
   // Fetched once at init() from GET /api/jira-statuses — empty if sync isn't
   // configured, or the fetch failed. A ticket row falls back to a read-only badge.

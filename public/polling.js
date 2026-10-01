@@ -16,6 +16,7 @@ import { apiJson, makeSnapshot, localDb } from "./api.js";
 import { costBadgeText, costBadgeTitle } from "./badges.js";
 import { DEFAULT_TEAM_OPTIONS, renderTeamOptions } from "./people.js";
 import { renderTickets } from "./lanes.js";
+import { buildDemoDocs } from "./demo-data.js";
 
 const dbStateEl = document.getElementById("dbstate");
 const refreshTimeEl = document.getElementById("refreshTime");
@@ -45,9 +46,14 @@ export async function reloadBoard(){
     if (generation !== state.boardGeneration) return; // switched workspace while these were in flight
     state.teamOptions = Array.isArray(teamOpts) && teamOpts.length ? teamOpts : DEFAULT_TEAM_OPTIONS.slice();
     state.peopleMap = peopleObj || {};
-    const docs = Object.keys(ticketsObj || {})
+    let docs = Object.keys(ticketsObj || {})
       .map(k => makeSnapshot(k, ticketsObj[k]))
       .sort((a,b) => (b.data().createdAt || "").localeCompare(a.data().createdAt || ""));
+    // Demo mode: nothing real to show yet (no tracker connected, no tickets of
+    // any other origin either) — see demo-data.js for why these are safe to
+    // show and never persisted anywhere.
+    state.showingDemoDocs = docs.length === 0 && !state.jiraConfigured && !state.notionConfigured;
+    if (state.showingDemoDocs) docs = buildDemoDocs();
     renderTeamOptions();
     renderTickets(docs, localDb);
     dbStateEl.textContent = "Local server — data/db.json";

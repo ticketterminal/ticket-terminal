@@ -440,9 +440,25 @@ export function renderLaneItems(container, items, dbRef, cmp, emptyMessage){
   });
 }
 
+const demoNoticeEl = document.getElementById("demoNotice");
+function updateDemoNotice(){
+  if (!demoNoticeEl) return;
+  demoNoticeEl.hidden = !state.showingDemoDocs;
+  if (demoNoticeEl.hidden) return;
+  demoNoticeEl.replaceChildren();
+  demoNoticeEl.appendChild(el("span", null, "Showing example tickets — connect Jira or Notion to see your real board."));
+  const connectBtn = document.createElement("button");
+  connectBtn.type = "button";
+  connectBtn.className = "refreshbtn";
+  connectBtn.textContent = "Connect now";
+  connectBtn.addEventListener("click", () => { location.hash = routeHash("#/settings"); });
+  demoNoticeEl.appendChild(connectBtn);
+}
+
 export function renderTickets(allDocs, dbRef){
   state.lastTicketDocs = allDocs;
   state.lastDbRef = dbRef;
+  updateDemoNotice();
   normalizeSprintFilter(); // before any lane is filtered, so a stale remembered sprint can't empty the board for one render
   state.costBadgeEls = []; // every renderTicketRow() call below re-registers whatever it mounts
   state.memoryBadgeEls = [];
