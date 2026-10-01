@@ -1363,6 +1363,13 @@ def index():
     return FileResponse(str(PUBLIC_DIR / "index.html"))
 
 
+@app.get("/favicon.ico")
+def favicon():
+    # Browsers probe this exact root-level path regardless of index.html's own
+    # <link rel="icon"> tags (which point at /static/assets/ for everything else).
+    return FileResponse(str(PUBLIC_DIR / "favicon.ico"))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=os.environ.get("WMP_HOST", "127.0.0.1"), port=4173)
