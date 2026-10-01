@@ -93,6 +93,63 @@ export function applyMemoryGraphFilters(){
   visNetworkInstance.setData({ nodes, edges });
 }
 
+// The only way a memory file gets created at all — write_doc (server/memory_analysis.py)
+// deliberately refuses to touch a path that doesn't already exist, and the edit panel below
+// only ever opens a node the graph already knows about. A fresh id opens straight into that
+// same edit panel via renderMemoryGraph's own focusId param, so there's no separate "new file"
+// view to keep in sync with the real one.
+function buildAddMemoryGroup(){
+  const group = el("div","controlgroup addmemorygroup");
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "+ New memory file";
+
+  const form = el("span","addmemoryform");
+  form.hidden = true;
+  const idInput = document.createElement("input");
+  idInput.type = "text";
+  idInput.placeholder = "lowercase-id";
+  idInput.maxLength = 64;
+  idInput.className = "addmemoryinput";
+  const createBtn = document.createElement("button");
+  createBtn.type = "button";
+  createBtn.textContent = "Create";
+  const msg = el("span","settingsmsg","");
+  form.appendChild(idInput);
+  form.appendChild(createBtn);
+  form.appendChild(msg);
+
+  addBtn.addEventListener("click", () => {
+    addBtn.hidden = true;
+    form.hidden = false;
+    idInput.focus();
+  });
+
+  async function submit(){
+    const id = idInput.value.trim();
+    msg.textContent = "";
+    if (!id) { msg.textContent = "Enter an id."; msg.className = "settingsmsg err"; return; }
+    createBtn.disabled = true;
+    try {
+      const res = await apiJson("/api/memory-graph", { method: "POST", body: JSON.stringify({ id }) });
+      if (!res.ok) throw new Error(res.error || "failed");
+      idInput.value = "";
+      await renderMemoryGraph(id);
+    } catch (e) {
+      msg.textContent = "Couldn't create: " + e.message;
+      msg.className = "settingsmsg err";
+    } finally {
+      createBtn.disabled = false;
+    }
+  }
+  createBtn.addEventListener("click", submit);
+  idInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+
+  group.appendChild(addBtn);
+  group.appendChild(form);
+  return group;
+}
+
 export async function renderMemoryGraph(focusId){
   memoryPanelEl.innerHTML = "";
   memoryPanelEl.appendChild(el("div","empty-state","Click a node to view or edit it."));
@@ -146,6 +203,8 @@ export async function renderMemoryGraph(focusId){
   });
   group.appendChild(expandBtn);
   controlsEl.appendChild(group);
+
+  controlsEl.appendChild(buildAddMemoryGroup());
 
   const spacingGroup = el("div","controlgroup");
   spacingGroup.appendChild(el("span","controllabel","Spacing:"));

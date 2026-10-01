@@ -1,15 +1,15 @@
-// Settings page: editable categories, Jira + Notion connections, and the memory-source
-// directory — all editable from the running app instead of hand-edited JSON/
-// .env files. See server/settings_store.py for the precedence rule (a
-// Settings-page save wins over the corresponding env var, applied immediately,
-// no restart needed).
+// Settings page: editable categories, Jira + Notion connections, the memory-source
+// directory, the Claude/Codex CLI detection status, and people/teams — all editable
+// from the running app instead of hand-edited JSON/.env files. See
+// server/settings_store.py for the precedence rule (a Settings-page save wins over
+// the corresponding env var, applied immediately, no restart needed).
 import { categoryRevision, renderCategoryManagement, refreshCategoryManagement } from "./category-management.js";
 import { state } from "./state.js";
 import { el } from "./dom-utils.js";
 import { apiJson } from "./api.js";
 import { reloadBoard } from "./polling.js";
 import { buildCategoryUI, renderTickets } from "./lanes.js";
-import { renderWorkspacesForm } from "./workspaces.js";
+import { renderWorkspacesForm, routeHash } from "./workspaces.js";
 
 const catListEl = document.getElementById("settingsCategoriesList");
 const catCountEl = document.getElementById("settingsCatCount");
@@ -19,6 +19,7 @@ const saveCategoriesBtn = document.getElementById("settingsSaveCategoriesBtn");
 const jiraFormEl = document.getElementById("settingsJiraForm");
 const notionFormEl = document.getElementById("settingsNotionForm");
 const memoryFormEl = document.getElementById("settingsMemoryForm");
+const providersFormEl = document.getElementById("settingsProvidersForm");
 
 const STATUS_OPTIONS = ["covered", "partial", "gap"];
 
@@ -236,7 +237,10 @@ async function renderJiraForm(){
 
 async function renderMemoryForm(){
   memoryFormEl.innerHTML = "Loading…";
-  const settings = await apiJson("/api/settings").catch(() => null);
+  const [settings, graph] = await Promise.all([
+    apiJson("/api/settings").catch(() => null),
+    apiJson("/api/memory-graph").catch(() => null),
+  ]);
   memoryFormEl.innerHTML = "";
   if (!settings){
     memoryFormEl.appendChild(el("div","empty-state","Couldn't load current settings — is the server running?"));
@@ -249,6 +253,21 @@ async function renderMemoryForm(){
   dirInput.value = settings.memoryDirSource === "settings" ? settings.memoryDir : "";
   memoryFormEl.appendChild(buildSettingsRow("Memory folder path", dirInput));
   memoryFormEl.appendChild(el("div","settingshint","Currently reading from: " + settings.memoryDir + " (" + sourceLabel + "). Leave blank here to keep using that."));
+
+  const nodeCount = (graph && graph.ok) ? graph.nodes.length : null;
+  const statusRow = el("div","settingshint");
+  if (nodeCount === null){
+    statusRow.textContent = "Couldn't check how many memory files are there right now.";
+  } else if (nodeCount === 0){
+    statusRow.appendChild(el("span",null,"No memory files there yet. "));
+    const createLink = el("button","gettingstartedbtn","Create your first one in the memory graph →");
+    createLink.type = "button";
+    createLink.addEventListener("click", () => { location.hash = routeHash("#/memory"); });
+    statusRow.appendChild(createLink);
+  } else {
+    statusRow.textContent = nodeCount + " memory file" + (nodeCount === 1 ? "" : "s") + " found.";
+  }
+  memoryFormEl.appendChild(statusRow);
 
   const explain = el("div","settingsexplain");
   explain.innerHTML =
@@ -287,6 +306,42 @@ async function renderMemoryForm(){
       saveBtn.disabled = false;
     }
   });
+}
+
+// Claude/Codex: unlike Jira/Notion there is no token to paste or OAuth flow to run from
+// inside this app — the CLI itself owns its own sign-in (`claude login` / `codex login`,
+// run by hand in a real terminal). All this section can do is report what
+// /api/terminal-providers (server/main.py's agent_executable) already resolves: whether each
+// binary is reachable on PATH at all, not whether it's actually signed in.
+async function renderProvidersForm(){
+  if (!providersFormEl) return;
+  providersFormEl.innerHTML = "Loading…";
+  const res = await apiJson("/api/terminal-providers").catch(() => null);
+  providersFormEl.innerHTML = "";
+  const providers = (res && res.providers) || [];
+
+  [["claude","Claude Code"], ["codex","Codex"]].forEach(([id, label]) => {
+    const row = el("div","settingshint");
+    const found = providers.includes(id);
+    row.textContent = (found ? "✓ " : "✗ ") + label + (found ? " detected on PATH." : " not found on PATH.");
+    row.className = "settingsmsg " + (found ? "ok" : "err");
+    providersFormEl.appendChild(row);
+  });
+
+  const explain = el("div","settingsexplain");
+  explain.innerHTML =
+    "Ticket Terminal launches whichever CLI you already have installed and signed in — " +
+    "<code>claude login</code> or <code>codex login</code> happens in your own terminal, " +
+    "outside this app. There's nothing to connect from in here; this just confirms the CLI " +
+    "is reachable. Open any ticket's terminal panel once you're signed in to start a session.";
+  providersFormEl.appendChild(explain);
+
+  const actions = el("div","settingsactions");
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button"; refreshBtn.className = "refreshbtn"; refreshBtn.textContent = "Refresh";
+  refreshBtn.addEventListener("click", renderProvidersForm);
+  actions.appendChild(refreshBtn);
+  providersFormEl.appendChild(actions);
 }
 
 // Notion: a personal (internal-integration) token pasted directly is the
@@ -695,6 +750,7 @@ export async function renderSettingsPage(){
   renderJiraForm();
   renderNotionForm();
   renderMemoryForm();
+  renderProvidersForm();
 }
 
 export function wireSettingsUI(){

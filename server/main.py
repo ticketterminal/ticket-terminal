@@ -458,6 +458,7 @@ def get_config():
         "jiraBaseUrl": jira_sync.get_config()["base_url"],
         "jiraConfigured": jira_sync.configured(),
         "notionConfigured": notion_sync.configured(),
+        "memoryNodeCount": len(memory_analysis.read_graph()["nodes"]),
     }
 
 
@@ -729,6 +730,22 @@ def get_memory_graph():
     """The real memory corpus as a graph — see memory_analysis.read_graph."""
     try:
         return {"ok": True, **memory_analysis.read_graph()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/memory-graph")
+def post_memory_doc(body: dict = Body(...)):
+    """Starts a new memory file — the only create path there is (PUT above only ever edits an
+    existing one). See memory_analysis.create_doc."""
+    memory_id = (body.get("id") or "").strip()
+    try:
+        content = memory_analysis.create_doc(memory_id, body.get("description", ""), body.get("type", ""))
+        return {"ok": True, "content": content}
+    except FileExistsError:
+        return {"ok": False, "error": "a memory file with that id already exists"}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

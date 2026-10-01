@@ -30,6 +30,10 @@ export const state = {
   // has no real tickets and neither tracker is configured. Read by the demo
   // banner (lanes.js).
   showingDemoDocs: false,
+  // Same /api/config fetch — how many real memory files exist right now, at
+  // whichever folder memory_analysis.memory_dir_info() currently resolves to.
+  // Drives the getting-started checklist's "Set up a memory store" step.
+  memoryNodeCount: 0,
 
   // Fetched once at init() from GET /api/jira-statuses — empty if sync isn't
   // configured, or the fetch failed. A ticket row falls back to a read-only badge.
