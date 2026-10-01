@@ -9,7 +9,7 @@ import { state } from "./state.js";
 import { apiJson, withWorkspace } from "./api.js";
 import { reloadBoard, startLiveStatsPoll, stopLiveStatsPoll } from "./polling.js";
 import { renderTickets } from "./lanes.js";
-import { categoryLabel } from "./dom-utils.js";
+import { el, categoryLabel } from "./dom-utils.js";
 
 // Returns the "⚙ running" badge button for this ticket, or null if no
 // background process is running for it.
@@ -51,7 +51,13 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
   controls.className = "terminal-controls";
   termHost.before(controls);
   termHost.hidden = true;
-  for (const provider of ["claude", "codex"]){
+  // Demo tickets (see demo-data.js) never spawn a real PTY — there is no real
+  // ticket behind them to run a session against. The expand/collapse wiring
+  // below is unaffected (it isn't terminal-specific).
+  if (data.isDemo){
+    controls.appendChild(el("p", "demoterminalnote",
+      "Demo tickets don't open real sessions. Connect Jira or Notion, then open a real ticket to start a Claude or Codex session."));
+  } else for (const provider of ["claude", "codex"]){
     const panel = document.createElement("div");
     panel.className = "termhost";
     panel.hidden = true;
