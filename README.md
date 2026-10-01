@@ -66,6 +66,11 @@ access, can use the same folder; point it there from its own instructions file (
 
 ## Quick start
 
+Two ways to run it: directly with Python, or in Docker. Either way you end up with the same app at
+**http://127.0.0.1:4173** — there is no build step and no separate frontend process.
+
+### Option 1: Python
+
 Requirements: Python 3.12, and the [`claude`](https://docs.claude.com/en/docs/claude-code) and/or
 [`codex`](https://learn.chatgpt.com/docs/codex/cli) CLI, signed in. Optional: Node.js 22.13+ for
 cost badges, and a Jira or Notion account for ticket sync.
@@ -76,17 +81,42 @@ pip install -r requirements.txt
 python server/main.py
 ```
 
-Open **http://127.0.0.1:4173**. There is no build step and no separate frontend process.
-
 To show cost badges, install codeburn once:
 
 ```bash
 npm install -g codeburn
 ```
 
-**Security:** the server binds to `127.0.0.1` only. It can spawn a real shell, which is the point of
-the embedded terminal, so it must never be reachable from the network. There is no login layer;
-localhost is the security boundary.
+### Option 2: Docker
+
+Use this if you would rather not manage a Python venv (and Node, for cost badges) on your own
+machine. The image bundles Python, Node, and both the `claude` and `codex` CLIs; what it does
+**not** bundle is your agent sign-in or your real filesystem — those reach the container through
+bind mounts, so a session started here still runs real commands against your real repos, with your
+real credentials. This is a packaging convenience, not a sandbox.
+
+```bash
+cp .env.example .env   # or: touch .env, if you are not using Jira/Notion sync
+UID=$(id -u) GID=$(id -g) docker compose up -d --build
+```
+
+[`docker-compose.yml`](docker-compose.yml) mounts your whole `$HOME` into the container at the same
+path it has on your host, so ticket `workDir`s resolve correctly and `~/.claude`/`~/.codex`
+(wherever `claude`/`codex` already keep you signed in) just work — sign in on your host as normal,
+not inside the container. `./data` is a separate mount for the app's own state (see
+[Your data](#your-data)); `.env` carries Jira/Notion credentials in, same as the Python install.
+
+If a tool inside the container complains about an unknown user (cosmetic, from running as your
+host UID with no matching container `/etc/passwd` entry), it is safe to ignore — file ownership on
+the bind mounts is still correct.
+
+**Security:** the server binds to `127.0.0.1` only — in Docker, that happens *inside* the
+container's own network namespace, so the real boundary moves to the host-side publish instead.
+[`docker-compose.yml`](docker-compose.yml) already scopes this correctly
+(`127.0.0.1:4173:4173`); if you ever run the image by hand, never drop the `127.0.0.1:` prefix from
+`-p`, or it is reachable from your whole network. Either way: it can spawn a real shell, which is
+the point of the embedded terminal, so it must never be reachable from the network. There is no
+login layer; localhost is the security boundary.
 
 **Why a local app and not a hosted page?** A sandboxed web page cannot spawn a local process: no
 `terraform`, `aws` or `git` against a ticket, and no transcript of the session that did it.
