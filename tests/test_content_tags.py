@@ -314,6 +314,32 @@ class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
             result = jira_sync.discover_new_tickets(self.db)
         self.assertEqual(result["added"], ["OPS-1"])
         self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["categories"], [])
+        # Regression: every ticket landing uncategorized with zero visible reason is its own
+        # bug (found live testing a container whose Claude CLI was never signed in) — the
+        # failure must surface, not just get swallowed the way it used to.
+        self.assertEqual(result["categoryError"], "claude not authenticated")
+
+    def test_classification_success_reports_no_category_error(self):
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([issue()])):
+            auto_categorize.classify_many.return_value = {"OPS-1": ["security"]}
+            result = jira_sync.discover_new_tickets(self.db)
+        self.assertIsNone(result["categoryError"])
+
+    def test_category_error_propagates_through_sync_all_tickets(self):
+        db = FakeDB({})
+        with patch.object(jira_sync, "configured", return_value=True), \
+             patch.object(jira_sync, "get_config", return_value=self.config), \
+             patch.object(jira_sync, "auto_categorize") as auto_categorize, \
+             patch.object(jira_sync.content, "read_categories", return_value=[]), \
+             patch.object(jira_sync.content_tags, "generate", return_value={}), \
+             patch.object(jira_sync.requests, "post", return_value=JiraResponse([issue()])):
+            auto_categorize.classify_many.side_effect = RuntimeError("claude not authenticated")
+            result = jira_sync.sync_all_tickets(db)
+        self.assertEqual(result["categoryError"], "claude not authenticated")
+        self.assertEqual(db.data["jiraTickets"]["OPS-1"]["categories"], [])
 
 
 if __name__ == "__main__":
