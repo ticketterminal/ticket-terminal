@@ -236,8 +236,13 @@ async function renderJiraForm(){
       const res = await apiJson("/api/sync-jira", {method:"POST"});
       if (res.ok){
         const added = (res.added || []).length;
-        showMsg(msg, "Connected ✓ — imported " + added + " new ticket" + (added === 1 ? "" : "s") +
-          ", checked " + (res.checked || 0) + " total.", "ok");
+        let text = "Connected ✓ — imported " + added + " new ticket" + (added === 1 ? "" : "s") +
+          ", checked " + (res.checked || 0) + " total.";
+        // A broken/unauthenticated Claude CLI must never block an import (see
+        // jira_sync.discover_new_tickets) — but every imported ticket silently landing
+        // uncategorized, with nothing anywhere saying why, is its own bug. Surface it here.
+        if (res.categoryError) text += " Category suggestions couldn't run: " + res.categoryError;
+        showMsg(msg, text, res.categoryError ? "err" : "ok");
         // This can be a real initial import — reload the (currently hidden) board now rather
         // than leaving it stale until the next 60s poll or a manual "‹ Back to chart".
         await reloadBoard();

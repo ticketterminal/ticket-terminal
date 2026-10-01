@@ -9,6 +9,23 @@ let current = null;
 let poll = null;
 export function categoryRevision(){ return current?.revision; }
 
+// Same palette as server/category_management.py's COLORS, for a new category added in the
+// onboarding dialog (below) to look consistent with the rest of a role's preset before the
+// server ever sees it.
+const COLORS_FALLBACK = ['#4E79A7', '#59A14F', '#E15759', '#B07AA1', '#F28E2B', '#76B7B2'];
+
+// Mirrors server/category_management.py's validate() id scheme (lowercase words joined by
+// hyphens) client-side, only for a category the user typed a name for but never had a
+// server-assigned id (the onboarding dialog's "+ Add category" row) — suffixed against
+// usedIds so two similarly-named new categories never collide.
+function slugify(name, usedIds){
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'category';
+  let id = base, n = 2;
+  while (usedIds.has(id)){ id = base + '-' + n; n++; }
+  usedIds.add(id);
+  return id;
+}
+
 async function request(path, body, method='POST'){
   const result = await apiJson('/api/category-management' + path, body === undefined ? undefined : {method, body:JSON.stringify(body)});
   if (!result.ok) throw new Error(result.error || 'Category request failed');
@@ -205,12 +222,55 @@ export async function initCategoryManagement(){
     if(!current.onboarded && !current.existingSetup){
       const dialog=document.createElement('dialog');dialog.className='categoryonboarding';
       dialog.appendChild(el('h2',null,'What kind of work do you do?'));
-      dialog.appendChild(el('p','sub','Start with categories for your role. You can rename, add, or change them at any time.'));
+      dialog.appendChild(el('p','sub','Start with categories for your role — rename, remove, or add your own below before you start. You can always change them later too.'));
       const role=document.createElement('select');role.setAttribute('aria-label','Work role');current.roles.forEach(name=>{const opt=document.createElement('option');opt.value=name;opt.textContent=name;role.appendChild(opt);});
-      const preview=el('div','categorypreviews');const refresh=()=>previewNames(preview,current.presets[role.value]);role.addEventListener('change',refresh);role.value=current.roles[0];refresh();
+      // A working copy of the chosen role's preset — edited in place here, independent of
+      // current.presets (the server's own unedited defaults), until "Start with these
+      // categories" either applies it as-is or, if it was edited, saves the edited version
+      // right after (see the start button below).
+      let draftPreview=[];
+      const preview=el('div','categorypreviews editable');
+      function renderPreview(){
+        preview.replaceChildren();
+        draftPreview.forEach((cat,i)=>{
+          const chip=el('span','categorypreview editable');
+          const nameInput=document.createElement('input');
+          nameInput.value=cat.name;nameInput.setAttribute('aria-label','Category name');
+          nameInput.addEventListener('input',()=>{cat.name=nameInput.value;});
+          const removeBtn=document.createElement('button');
+          removeBtn.type='button';removeBtn.className='categorypreviewremove';removeBtn.textContent='✕';
+          removeBtn.title='Remove this category';
+          removeBtn.addEventListener('click',()=>{draftPreview.splice(i,1);renderPreview();});
+          chip.append(nameInput,removeBtn);
+          preview.appendChild(chip);
+        });
+        preview.appendChild(button('+ Add category',()=>{
+          draftPreview.push({id:'',name:'',status:'gap',color:COLORS_FALLBACK[draftPreview.length%COLORS_FALLBACK.length],note:'',memories:[],skills:[],docs:[]});
+          renderPreview();
+        },'categorypreviewadd'));
+      }
+      const refresh=()=>{draftPreview=current.presets[role.value].map(c=>({...c}));renderPreview();};
+      role.addEventListener('change',refresh);role.value=current.roles[0];refresh();
       const status=el('p','settingsmsg');
       const start=button('Start with these categories',async()=>{
-        try{canApply();await applyResult(await request('/profile',{role:role.value,intervalHours:0,applyStarter:true,revision:current.revision},'PUT'));dialog.close();dialog.remove();}
+        try{
+          canApply();
+          // Blank names (an "+ Add category" row never filled in) are dropped rather than
+          // blocking "Start" on a validation error for something the user may have just
+          // decided not to add after all.
+          const edited=draftPreview.filter(c=>c.name.trim()).map(c=>({...c,name:c.name.trim()}));
+          let result=await request('/profile',{role:role.value,intervalHours:0,applyStarter:true,revision:current.revision},'PUT');
+          const applied=result.presets[role.value]||[];
+          const changed=edited.length!==applied.length || edited.some((c,i)=>c.name!==applied[i]?.name);
+          if(changed){
+            const usedIds=new Set(edited.filter(c=>c.id).map(c=>c.id));
+            const named=edited.map(c=>c.id?c:{...c,id:slugify(c.name,usedIds)});
+            const saved=await apiJson('/api/categories?revision='+encodeURIComponent(result.revision),{method:'PUT',body:JSON.stringify(named)});
+            if(!saved.ok)throw new Error(saved.error||'Could not save your edited categories — the starter set was applied instead.');
+            result=await request('');
+          }
+          await applyResult(result);dialog.close();dialog.remove();
+        }
         catch(error){status.textContent=error.message;}
       });
       dialog.append(role,preview,start,button('Set up later',()=>{dialog.close();dialog.remove();}),status);

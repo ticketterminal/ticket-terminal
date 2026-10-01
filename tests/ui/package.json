@@ -1,1 +1,1 @@
-{"private": true, "type": "module", "scripts": {"test": "node categories.mjs && node notion-settings.mjs && node sprints.mjs && node workspaces.mjs && node insights.mjs && node lanes.mjs && node demo-mode.mjs"}, "devDependencies": {"linkedom": "0.18.13"}}
+{"private": true, "type": "module", "scripts": {"test": "node categories.mjs && node notion-settings.mjs && node sprints.mjs && node workspaces.mjs && node insights.mjs && node lanes.mjs && node demo-mode.mjs && node category-onboarding-dialog.mjs"}, "devDependencies": {"linkedom": "0.18.13"}}
