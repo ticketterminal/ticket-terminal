@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,18 @@ class Socket:
     async def send_text(self, text): pass
     async def send_bytes(self, text): pass
     async def receive(self): return {'type': 'websocket.disconnect'}
+
+class ResizeThenDisconnectSocket(Socket):
+    """Sends one live "resize" message before disconnecting, to exercise the
+    kind == "resize" branch inside terminal_ws's own receive loop — Socket's
+    own immediate-disconnect means that branch never runs otherwise."""
+    def __init__(self, rows, cols):
+        super().__init__()
+        self._messages = [{'type': 'websocket.receive', 'text': json.dumps({'type': 'resize', 'rows': rows, 'cols': cols})}]
+    async def receive(self):
+        if self._messages:
+            return self._messages.pop(0)
+        return {'type': 'websocket.disconnect'}
 
 class ProviderTests(unittest.TestCase):
     # A temp data root so nothing here can reach the real data/ tree, and so
@@ -110,6 +123,30 @@ class ProviderTests(unittest.TestCase):
              patch.object(main.os, 'close'):
             main._terminate_process(key, main.running_processes[key], 'stopped')  # must not raise
         proc.terminate.assert_called_once()
+
+    def test_local_session_resize_goes_through_agent_launch_set_winsize(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('codex', False)), \
+             patch.object(main.pty, 'openpty', return_value=(100, 101)), \
+             patch.object(main.os, 'close'), \
+             patch.object(main.agent_launch, 'set_winsize') as set_winsize, \
+             patch.object(main.subprocess, 'Popen', return_value=proc):
+            asyncio.run(main.terminal_ws(ResizeThenDisconnectSocket(40, 120), 'TEST-1', 'codex'))
+        # Once for the initial open (30, 100), once for the live resize message.
+        set_winsize.assert_called_with(100, 40, 120)
+
+    def test_bridged_session_resize_goes_through_the_handles_resize_method(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(42, proc)), \
+             patch.object(main.subprocess, 'Popen') as popen:
+            asyncio.run(main.terminal_ws(ResizeThenDisconnectSocket(40, 120), 'TEST-1', 'codex'))
+        popen.assert_not_called()
+        proc.resize.assert_called_once_with(40, 120)
 
     def test_invalid_provider_does_not_spawn(self):
         with patch.object(main.subprocess, 'Popen') as launch:

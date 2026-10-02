@@ -1,10 +1,10 @@
 """Real (not mocked) end-to-end test of the host<->container bridge: runs
-host_bridge.py's actual connection handler against a temp Unix socket in this
-same test process, and drives host_bridge_client (the side server/main.py
-uses) against it — genuine SCM_RIGHTS fd-passing and genuine subprocess
-spawning, no Docker required, since fd-passing works fine between any two
-sockets on the same machine, even within one process via a temp socket file.
-"""
+host_bridge.py's actual connection handler against a real TCP listener on
+127.0.0.1 in this same test process, and drives host_bridge_client (the side
+server/main.py uses) against it — genuine subprocess spawning and a genuine
+byte relay over a real socket, no Docker required (the one thing this can't
+exercise is the host.docker.internal hop itself, verified separately, live,
+against a real container: see PR #42's description)."""
 import os
 import socket
 import sys
@@ -18,17 +18,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'server'))
 import host_bridge
 import host_bridge_client
+import host_bridge_protocol as proto
 
 
 class HostBridgeEndToEndTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.socket_path = Path(self.tmp.name) / "bridge.sock"
-        self.env_patch = patch.dict(os.environ, {"WMP_HOST_BRIDGE_SOCKET": str(self.socket_path)})
-        self.env_patch.start()
-
-        self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.server_sock.bind(str(self.socket_path))
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock.bind(("127.0.0.1", 0))
+        self.port = self.server_sock.getsockname()[1]
         self.server_sock.settimeout(0.2)
         self.server_sock.listen(8)
         self.stopping = False
@@ -44,18 +42,28 @@ class HostBridgeEndToEndTests(unittest.TestCase):
         self.accept_thread = threading.Thread(target=accept_loop, daemon=True)
         self.accept_thread.start()
 
+        # host_bridge_protocol.HOST is "host.docker.internal" for the real
+        # container case; here we're one process talking to itself, so patch it
+        # to loopback — the Docker hop itself is verified separately, live.
+        self.host_patch = patch.object(proto, "HOST", "127.0.0.1")
+        self.host_patch.start()
+        self.env_patch = patch.dict(os.environ, {"WMP_HOST_BRIDGE_PORT": str(self.port)})
+        self.env_patch.start()
+
     def tearDown(self):
         self.stopping = True
         self.accept_thread.join(timeout=2)
         self.server_sock.close()
         self.env_patch.stop()
+        self.host_patch.stop()
         self.tmp.cleanup()
+        host_bridge.sessions.clear()
 
     def test_available_is_true_once_the_bridge_is_listening(self):
         self.assertTrue(host_bridge_client.available())
 
-    def test_available_is_false_against_a_dead_socket_path(self):
-        with patch.dict(os.environ, {"WMP_HOST_BRIDGE_SOCKET": str(Path(self.tmp.name) / "nothing-here.sock")}):
+    def test_available_is_false_against_a_dead_port(self):
+        with patch.dict(os.environ, {"WMP_HOST_BRIDGE_PORT": "1"}):  # nothing listens on port 1
             self.assertFalse(host_bridge_client.available())
 
     def test_resolve_relays_a_real_lookup(self):
@@ -80,25 +88,47 @@ class HostBridgeEndToEndTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(marker.read_text(), "ok")
 
-    def test_spawn_hands_over_a_real_usable_pty_fd(self):
+    def _read_until(self, fd, needle, deadline_s=5):
+        deadline = time.time() + deadline_s
+        data = b""
+        while needle not in data and time.time() < deadline:
+            os.set_blocking(fd, False)
+            try:
+                data += os.read(fd, 4096)
+            except BlockingIOError:
+                time.sleep(0.05)
+        return data
+
+    def test_spawn_relays_real_bytes_over_a_local_socketpair_fd(self):
         master_fd, handle = host_bridge_client.spawn(
             [sys.executable, "-c", "import sys; sys.stdout.write('hello-from-host\\n'); sys.stdout.flush()"],
             str(self.tmp.name),
         )
         self.assertIsNotNone(master_fd)
         try:
-            deadline = time.time() + 5
-            data = b""
-            while b"hello-from-host" not in data and time.time() < deadline:
-                os.set_blocking(master_fd, False)
-                try:
-                    data += os.read(master_fd, 4096)
-                except BlockingIOError:
-                    time.sleep(0.05)
+            data = self._read_until(master_fd, b"hello-from-host")
             self.assertIn(b"hello-from-host", data)
             handle.wait(timeout=2)
             self.assertEqual(handle.poll(), 0)
         finally:
+            os.close(master_fd)
+            handle.close()
+
+    def test_input_written_to_master_fd_reaches_the_real_child(self):
+        # cat echoes stdin to stdout; the pty's own line-discipline echo would
+        # double it, so disable that and read raw instead of relying on exact
+        # byte-for-byte equality against the pty's cooked-mode framing.
+        master_fd, handle = host_bridge_client.spawn([sys.executable, "-u", "-c",
+            "import sys\nfor line in sys.stdin:\n    sys.stdout.write('got:' + line)\n    sys.stdout.flush()"],
+            str(self.tmp.name))
+        self.assertIsNotNone(master_fd)
+        try:
+            os.write(master_fd, b"marco\n")
+            data = self._read_until(master_fd, b"got:marco")
+            self.assertIn(b"got:marco", data)
+        finally:
+            handle.terminate()
+            handle.wait(timeout=2)
             os.close(master_fd)
             handle.close()
 
@@ -116,8 +146,37 @@ class HostBridgeEndToEndTests(unittest.TestCase):
             os.close(master_fd)
             handle.close()
 
+    def test_resize_reaches_the_real_host_pty(self):
+        import fcntl
+        import struct
+        import termios
+        master_fd, handle = host_bridge_client.spawn(
+            [sys.executable, "-c", "import time; time.sleep(5)"], str(self.tmp.name),
+        )
+        self.assertIsNotNone(master_fd)
+        try:
+            handle.resize(40, 120)
+            # Read it back the same way host_bridge.py set it — on the
+            # session's real host-side pty, found via its session id.
+            with host_bridge.sessions_lock:
+                entry = host_bridge.sessions[handle._session]
+            packed = fcntl.ioctl(entry["master_fd"], termios.TIOCGWINSZ, struct.pack("HHHH", 0, 0, 0, 0))
+            rows, cols = struct.unpack("HHHH", packed)[:2]
+            self.assertEqual((rows, cols), (40, 120))
+        finally:
+            handle.terminate()
+            handle.wait(timeout=2)
+            os.close(master_fd)
+            handle.close()
+
+    def test_poll_signal_wait_on_an_unknown_session_are_treated_as_already_gone(self):
+        handle = host_bridge_client.HostProcessHandle("not-a-real-session", None, None)
+        self.assertEqual(handle.poll(), 0)
+        handle.terminate()  # must not raise
+        handle.wait(timeout=1)  # must not raise
+
     def test_spawn_unreachable_bridge_reports_none_not_an_exception(self):
-        with patch.dict(os.environ, {"WMP_HOST_BRIDGE_SOCKET": str(Path(self.tmp.name) / "nothing-here.sock")}):
+        with patch.dict(os.environ, {"WMP_HOST_BRIDGE_PORT": "1"}):
             master_fd, handle = host_bridge_client.spawn(["true"], None)
         self.assertIsNone(master_fd)
         self.assertIsNone(handle)

@@ -123,15 +123,18 @@ the one-command server install:
 python3 server/host_bridge.py   # run on your host, outside Docker — stdlib only, nothing to install
 ```
 
-Then set `WMP_HOST_BRIDGE_SOCKET` in `.env` to the path it prints (default
-`~/.ticket-terminal/host-bridge.sock`) and restart the container. From then on, opening a terminal
-spawns `claude`/`codex` on your host instead of in the container: the server hands the host helper a
-command to run, which opens a real PTY and hands its file descriptor back over a local Unix socket —
-the container never runs the agent process itself. This is strictly additive to the trust boundary
-the `$HOME` bind mount already implies, just made explicit as one local socket instead of implicit in
-a mount; it's never reachable over the network. Leave `WMP_HOST_BRIDGE_SOCKET` unset to keep running
-claude/codex inside the container as before. Codex needs installing natively on your host for this
-(today it only ships inside the image) — see
+Then set `WMP_HOST_BRIDGE_PORT` in `.env` (default `4174`, matching the bridge's own default — set
+it explicitly on both sides if you change it) and restart the container. From then on, opening a
+terminal spawns `claude`/`codex` on your host instead of in the container: the server sends the host
+helper a command to run over a local TCP connection to `host.docker.internal` (Docker's standard
+container→host address, already wired up on Docker Desktop; native Linux Docker needs the
+`extra_hosts` line already in [`docker-compose.yml`](docker-compose.yml) for this to resolve), which
+opens a real PTY there and relays its bytes back — the container never runs the agent process itself.
+This is strictly additive to the trust boundary the `$HOME` bind mount already implies, just made
+explicit as one local port instead of implicit in a mount; bound to `127.0.0.1` on your host, so it's
+never reachable from your network, same as the server itself. Leave `WMP_HOST_BRIDGE_PORT` unset to
+keep running claude/codex inside the container as before. Codex needs installing natively on your
+host for this (today it only ships inside the image) — see
 [learn.chatgpt.com/docs/codex/cli](https://learn.chatgpt.com/docs/codex/cli).
 
 **Security:** the server binds to `127.0.0.1` only — in Docker, that happens *inside* the
