@@ -20,14 +20,11 @@ Docker section. Outside a container, leave this unset.
 """
 import asyncio
 import datetime
-import fcntl
 import json
 import mimetypes
 import os
 import pty
-import struct
 import subprocess
-import termios
 import threading
 import uuid
 from pathlib import Path
@@ -38,15 +35,16 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+import agent_launch
 import content
 import category_management
 import cost_analysis
 import codex_sessions
 import diagram_gen
+import host_bridge_client
 import pty_io
 import spend_ledger
 import terminal_draft
-import shutil
 import db
 import jira_sync
 import memory_analysis
@@ -845,34 +843,56 @@ def post_jira_transition(key: str, body: dict = Body(...)):
 
 
 # ---------- Terminal: real PTY running `claude`, bridged over a WebSocket ----------
+#
+# Spawning itself has two paths: local (pty.openpty()+Popen, right here in this
+# process — always available, what a native/non-Docker install always uses) and
+# bridged (server/host_bridge.py, running on the real host, handing back a real
+# host PTY's fd over a Unix socket via server/host_bridge_client.py — opt-in via
+# WMP_HOST_BRIDGE_SOCKET, for a Dockerized server that still wants claude/codex to
+# run as genuine host processes). _resolve_agent/_spawn_agent below are the only
+# two places that branch between them; everything downstream (running_processes,
+# the read/write/resize loop, reconnect, cost ledger) treats the result the same
+# either way, since host_bridge_client.HostProcessHandle implements the same
+# four methods (.poll/.terminate/.kill/.wait) actually used anywhere on `proc`.
 
-def _set_winsize(fd, rows, cols):
+
+def _resolve_agent(provider: str):
+    """(path, bridged) — bridged is True when WMP_HOST_BRIDGE_SOCKET is configured
+    and reachable, in which case `path` is the HOST's own resolved binary, not
+    anything in this container's filesystem."""
+    if host_bridge_client.available():
+        return host_bridge_client.resolve(provider), True
+    return agent_launch.agent_executable(provider), False
+
+
+def _spawn_agent(cmd: list[str], cwd: str, bridged: bool):
+    """(master_fd, proc) for a freshly started agent CLI — bridged spawns it on
+    the host via host_bridge_client, local opens a PTY right here.
+
+    No silent fallback when bridged: `cmd[0]` is already the HOST's resolved
+    path (from _resolve_agent) by the time this is called, which generally
+    doesn't exist inside this container's own filesystem — spawning it locally
+    would either fail confusingly or (worse) silently run a same-named but
+    different local binary. If the bridge drops out between resolve and spawn,
+    that's a real, reportable failure, not something to paper over."""
+    if bridged:
+        master_fd, proc = host_bridge_client.spawn(cmd, cwd)
+        if master_fd is None:
+            raise RuntimeError("the host bridge (WMP_HOST_BRIDGE_SOCKET) stopped responding between resolving and starting " + cmd[0])
+        return master_fd, proc
+    master_fd, slave_fd = pty.openpty()
+    agent_launch.set_winsize(master_fd, 30, 100)
     try:
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-    except OSError:
-        pass
-
-
-def _pty_child_preexec():
-    """Set up the child as a proper terminal session before exec.
-
-    `os.setsid()` alone is NOT enough, and this was a real bug for a long time:
-    it makes the child a session leader with *no controlling terminal*, because
-    the PTY slave was opened here in the parent — the child only inherits the
-    fd, it never `open()`s the terminal itself, which is what would implicitly
-    claim it. With no controlling terminal there is no foreground process group
-    for that terminal, so the kernel has nowhere to deliver SIGWINCH when we
-    resize the master. The TUI therefore never learns the window changed and
-    never repaints, which is what made a reconnected terminal sit blank
-    forever (see the reconnect nudge in terminal_ws).
-
-    TIOCSCTTY on fd 0 claims the slave as this session's controlling terminal.
-    fd 0 is the slave: preexec_fn runs after Popen has dup2'd it onto stdin.
-    As a bonus this also makes job control work properly — SIGINT/SIGWINCH now
-    reach the process group the way they would in a real terminal.
-    """
-    os.setsid()
-    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+        proc = subprocess.Popen(
+            cmd, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            cwd=cwd, preexec_fn=agent_launch.pty_child_preexec, env=agent_launch.build_child_env(),
+        )
+    except Exception:
+        os.close(master_fd)
+        raise
+    finally:
+        os.close(slave_fd)
+    return master_fd, proc
 
 
 def _claude_session_exists(cwd: str, session_id: str) -> bool:
@@ -886,33 +906,9 @@ def _claude_session_exists(cwd: str, session_id: str) -> bool:
     return (project_dir / f"{session_id}.jsonl").exists()
 
 
-def agent_executable(provider):
-    """Resolve once for both availability and launch, including desktop installs."""
-    override = os.environ.get("WMP_" + provider.upper() + "_BIN")
-    if override:
-        return shutil.which(os.path.expanduser(override))
-    found = shutil.which(provider)
-    if found:
-        return found
-    if provider == "codex":
-        candidates = [
-            Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
-            Path("/Applications/Codex.app/Contents/Resources/codex"),
-            Path.home() / "Applications/ChatGPT.app/Contents/Resources/codex",
-            Path.home() / "Applications/Codex.app/Contents/Resources/codex",
-            Path("/opt/homebrew/bin/codex"),
-            Path("/usr/local/bin/codex"),
-            Path.home() / ".local/bin/codex",
-        ]
-        for candidate in candidates:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-    return None
-
-
 @app.get("/api/terminal-providers")
 def get_terminal_providers():
-    return {"providers": [p for p in ("claude", "codex") if agent_executable(p)]}
+    return {"providers": [p for p in ("claude", "codex") if _resolve_agent(p)[0]]}
 
 
 def _wire_process_key(process_key: str) -> str:
@@ -1006,6 +1002,12 @@ def _terminate_process(registry_key: str, proc_info: dict, close_reason: str) ->
         os.close(proc_info["master_fd"])
     except OSError:
         pass
+    # Only a bridged HostProcessHandle has this — releases its control
+    # connection (and the bridge's thread serving it) now that the session is
+    # actually over, rather than leaving it open forever.
+    close = getattr(proc_info["proc"], "close", None)
+    if close:
+        close()
     # This is a genuine, explicit "this session is over" moment (unlike a websocket
     # disconnect, which can just be a collapsed tab reconnecting later) — record its final
     # cost now, before the session id might get rotated out from under this ticket later.
@@ -1058,7 +1060,7 @@ async def handoff_session(key: str, provider: str = "claude"):
         cwd = ticket.get("workDir") or DEFAULT_WORKDIR
         if not os.path.isdir(cwd):
             cwd = DEFAULT_WORKDIR
-        executable = agent_executable(provider)
+        executable, bridged = _resolve_agent(provider)
         if not executable:
             return {"ok": False, "error": provider + " is not installed or is not on the server PATH."}
 
@@ -1076,8 +1078,15 @@ async def handoff_session(key: str, provider: str = "claude"):
 
         # codex: open the real Desktop app and let its own (cwd-scoped) resume
         # picker find the session. Fire-and-forget: it's a GUI launch, nothing
-        # to await.
-        subprocess.Popen([executable, "app", cwd], cwd=cwd)
+        # to await. Bridged: the desktop app only makes sense opened on the real
+        # host, never inside this container, so this one always goes through the
+        # bridge when it's configured — no local fallback.
+        if bridged:
+            ok, error = host_bridge_client.launch([executable, "app", cwd], cwd)
+            if not ok:
+                return {"ok": False, "error": error}
+        else:
+            subprocess.Popen([executable, "app", cwd], cwd=cwd)
         db.update_ticket(key, {"codexHandedOffAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
         return {"ok": True, "opened": True}
     except Exception as e:
@@ -1115,7 +1124,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
     if provider not in ("claude", "codex") or key not in db.read()["jiraTickets"]:
         await websocket.close(code=1008)
         return
-    executable = agent_executable(provider)
+    executable, bridged = _resolve_agent(provider)
     if not executable:
         await websocket.send_text(provider + " is not installed or is not on the server PATH. Install it and sign in, then retry.")
         await websocket.close()
@@ -1234,24 +1243,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 agent_cmd = ["codex", "--no-daemon"]
 
             agent_cmd[0] = executable
-            master_fd, slave_fd = pty.openpty()
-            _set_winsize(master_fd, 30, 100)
-            child_env = os.environ.copy()
-            for k in list(child_env):
-                if k.startswith("CLAUDE") or k in {"AI_AGENT", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "CODEX_APP_TOOLS_PIPE_PATH"}:
-                    del child_env[k]
-            child_env.setdefault("TERM", "xterm-256color")
-            try:
-                proc = subprocess.Popen(
-                    agent_cmd,
-                    stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-                    cwd=cwd, preexec_fn=_pty_child_preexec, env=child_env,
-                )
-            except Exception:
-                os.close(master_fd)
-                raise
-            finally:
-                os.close(slave_fd)
+            master_fd, proc = _spawn_agent(agent_cmd, cwd, bridged)
 
             # Register this process as running in the background
             running_processes[process_key] = {"proc": proc, "master_fd": master_fd, "draft": pending_draft}
@@ -1293,7 +1285,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
         # resize is guaranteed to differ and trigger a real repaint of the current
         # screen — not a replay of history, just what's on screen right now.
         try:
-            _set_winsize(master_fd, 1, 1)
+            agent_launch.set_winsize(master_fd, 1, 1)
         except Exception:
             pass
 
@@ -1323,7 +1315,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 except OSError:
                     pass
             elif kind == "resize":
-                _set_winsize(master_fd, payload.get("rows", 30), payload.get("cols", 100))
+                agent_launch.set_winsize(master_fd, payload.get("rows", 30), payload.get("cols", 100))
     except WebSocketDisconnect:
         pass
     finally:

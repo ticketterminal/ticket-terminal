@@ -110,6 +110,30 @@ If a tool inside the container complains about an unknown user (cosmetic, from r
 host UID with no matching container `/etc/passwd` entry), it is safe to ignore — file ownership on
 the bind mounts is still correct.
 
+**Host-native agents.** Since the container already bind-mounts your whole `$HOME` (above), running
+claude/codex *inside* it buys you packaging convenience, not isolation — but it does mean the CLI
+version baked into the image, and its own `npm`/update machinery, can drift from (or outright
+conflict with) whatever you have installed natively, and some container profiles block things an
+agent CLI expects (e.g. codex's own sandbox needs a Linux user namespace, which isn't always
+available unprivileged in Docker). If you'd rather claude/codex ran as genuine host processes —
+your real installed versions, your real credentials, no container in the way — while still keeping
+the one-command server install:
+
+```bash
+python3 server/host_bridge.py   # run on your host, outside Docker — stdlib only, nothing to install
+```
+
+Then set `WMP_HOST_BRIDGE_SOCKET` in `.env` to the path it prints (default
+`~/.ticket-terminal/host-bridge.sock`) and restart the container. From then on, opening a terminal
+spawns `claude`/`codex` on your host instead of in the container: the server hands the host helper a
+command to run, which opens a real PTY and hands its file descriptor back over a local Unix socket —
+the container never runs the agent process itself. This is strictly additive to the trust boundary
+the `$HOME` bind mount already implies, just made explicit as one local socket instead of implicit in
+a mount; it's never reachable over the network. Leave `WMP_HOST_BRIDGE_SOCKET` unset to keep running
+claude/codex inside the container as before. Codex needs installing natively on your host for this
+(today it only ships inside the image) — see
+[learn.chatgpt.com/docs/codex/cli](https://learn.chatgpt.com/docs/codex/cli).
+
 **Security:** the server binds to `127.0.0.1` only — in Docker, that happens *inside* the
 container's own network namespace, so the real boundary moves to the host-side publish instead.
 [`docker-compose.yml`](docker-compose.yml) already scopes this correctly
@@ -255,6 +279,11 @@ page win over it.
 - `server/cost_analysis.py`: per-ticket cost via `codeburn`.
 - `server/content.py`, `category_management.py`: categories, docs and category history.
 - `server/workspaces.py`: workspace registry and per-request workspace selection.
+- `server/agent_launch.py`: finding/launching claude or codex in a PTY — pure stdlib, no FastAPI, so
+  it's shared by `main.py`'s local spawn path and `host_bridge.py` below.
+- `server/host_bridge.py`, `host_bridge_client.py`, `host_bridge_protocol.py`: the optional
+  host-native-agents path (see "Docker" above) — a standalone script you run on your host, the
+  container-side client that talks to it, and their shared Unix-socket wire format.
 - `public/`: plain vanilla JS frontend with no bundler.
 
 ## Development

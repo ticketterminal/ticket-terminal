@@ -36,7 +36,7 @@ class HandoffEndpointTests(unittest.TestCase):
 
     def test_claude_requires_a_session_id(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {}}}), \
-             patch.object(main, 'agent_executable', return_value='claude'):
+             patch.object(main, '_resolve_agent', return_value=('claude', False)):
             result = asyncio.run(main.handoff_session('T-1', 'claude'))
         self.assertFalse(result['ok'])
         self.assertIn('no Claude session', result['error'])
@@ -45,7 +45,7 @@ class HandoffEndpointTests(unittest.TestCase):
         # Verified live (2026-09-18): claude://resume?session=<id> is what
         # actually opens the right conversation in the real Claude app.
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'claudeSessionId': 'sess-1'}}}), \
-             patch.object(main, 'agent_executable', return_value='claude'):
+             patch.object(main, '_resolve_agent', return_value=('claude', False)):
             result = asyncio.run(main.handoff_session('T-1', 'claude'))
         self.assertEqual(result, {'ok': True, 'url': 'claude://resume?session=sess-1'})
 
@@ -55,7 +55,7 @@ class HandoffEndpointTests(unittest.TestCase):
         main.running_processes[key] = {'proc': proc, 'master_fd': 999}
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'claudeSessionId': 'sess-1'}}}), \
              patch.object(main.db, 'update_ticket'), \
-             patch.object(main, 'agent_executable', return_value='claude'), \
+             patch.object(main, '_resolve_agent', return_value=('claude', False)), \
              patch.object(main.os, 'close') as close, \
              patch.object(main.spend_ledger, 'append_entry') as append_entry:
             asyncio.run(main.handoff_session('T-1', 'claude'))
@@ -67,7 +67,7 @@ class HandoffEndpointTests(unittest.TestCase):
 
     def test_never_raises_when_something_blows_up(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'claudeSessionId': 'sess-1'}}}), \
-             patch.object(main, 'agent_executable', side_effect=RuntimeError('boom')):
+             patch.object(main, '_resolve_agent', side_effect=RuntimeError('boom')):
             result = asyncio.run(main.handoff_session('T-1', 'claude'))
         self.assertFalse(result['ok'])
         self.assertIn('boom', result['error'])
@@ -75,7 +75,7 @@ class HandoffEndpointTests(unittest.TestCase):
     def test_codex_opens_the_app_at_the_ticket_workdir(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'workDir': '/tmp'}}}), \
              patch.object(main.db, 'update_ticket') as update, \
-             patch.object(main, 'agent_executable', return_value='codex'), \
+             patch.object(main, '_resolve_agent', return_value=('codex', False)), \
              patch.object(main.os.path, 'isdir', return_value=True), \
              patch.object(main.subprocess, 'Popen') as popen:
             result = asyncio.run(main.handoff_session('T-1', 'codex'))
@@ -87,11 +87,32 @@ class HandoffEndpointTests(unittest.TestCase):
     def test_codex_does_not_require_an_existing_session(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {}}}), \
              patch.object(main.db, 'update_ticket'), \
-             patch.object(main, 'agent_executable', return_value='codex'), \
+             patch.object(main, '_resolve_agent', return_value=('codex', False)), \
              patch.object(main.subprocess, 'Popen') as popen:
             result = asyncio.run(main.handoff_session('T-1', 'codex'))
         self.assertTrue(result['ok'])
         popen.assert_called_once()
+
+    def test_codex_handoff_goes_through_the_bridge_when_configured_not_a_local_popen(self):
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'workDir': '/tmp'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.os.path, 'isdir', return_value=True), \
+             patch.object(main.host_bridge_client, 'launch', return_value=(True, '')) as launch, \
+             patch.object(main.subprocess, 'Popen') as popen:
+            result = asyncio.run(main.handoff_session('T-1', 'codex'))
+        self.assertEqual(result, {'ok': True, 'opened': True})
+        launch.assert_called_once_with(['/host/codex', 'app', '/tmp'], '/tmp')
+        popen.assert_not_called()
+
+    def test_codex_handoff_reports_a_bridge_launch_failure(self):
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'T-1': {'workDir': '/tmp'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.os.path, 'isdir', return_value=True), \
+             patch.object(main.host_bridge_client, 'launch', return_value=(False, 'host bridge not reachable')):
+            result = asyncio.run(main.handoff_session('T-1', 'codex'))
+        self.assertEqual(result, {'ok': False, 'error': 'host bridge not reachable'})
 
 
 class ReconnectAfterHandoffTests(unittest.TestCase):
@@ -112,9 +133,9 @@ class ReconnectAfterHandoffTests(unittest.TestCase):
         proc = MagicMock(); proc.poll.return_value = None
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': ticket}}), \
              patch.object(main.db, 'update_ticket') as update, \
-             patch.object(main, 'agent_executable', side_effect=lambda provider: provider), \
+             patch.object(main, '_resolve_agent', side_effect=lambda provider: (provider, False)), \
              patch.object(main.pty, 'openpty', return_value=(100, 101)), \
-             patch.object(main, '_set_winsize'), patch.object(main.os, 'close'), \
+             patch.object(main.agent_launch, 'set_winsize'), patch.object(main.os, 'close'), \
              patch.object(main.subprocess, 'Popen', return_value=proc):
             socket = Socket()
             asyncio.run(main.terminal_ws(socket, 'TEST-1', provider))
