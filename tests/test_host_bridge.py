@@ -114,6 +114,32 @@ class HostBridgeEndToEndTests(unittest.TestCase):
             os.close(master_fd)
             handle.close()
 
+    def test_a_session_idle_past_the_control_connections_timeout_stays_alive(self):
+        # Regression: _connect()'s 5s timeout is right for a one-shot control
+        # call, but spawn() reuses that connection as the long-lived relay —
+        # verified live, without resetting it to blocking, a terminal just
+        # sitting idle (completely normal) tore the whole session down once
+        # 5s passed with no new output, even though the real process was fine.
+        master_fd, handle = host_bridge_client.spawn(
+            [sys.executable, "-u", "-c",
+             "import sys, time\nsys.stdout.write('first\\n'); sys.stdout.flush()\ntime.sleep(6)\nsys.stdout.write('second\\n'); sys.stdout.flush()\ntime.sleep(2)"],
+            str(self.tmp.name),
+        )
+        self.assertIsNotNone(master_fd)
+        try:
+            data = self._read_until(master_fd, b"first")
+            self.assertIn(b"first", data)
+            # Now nothing arrives for 6s (longer than the old 5s timeout) —
+            # the connection must still be alive and deliver the next line.
+            data += self._read_until(master_fd, b"second", deadline_s=10)
+            self.assertIn(b"second", data)
+            self.assertIsNone(handle.poll())
+        finally:
+            handle.terminate()
+            handle.wait(timeout=2)
+            os.close(master_fd)
+            handle.close()
+
     def test_input_written_to_master_fd_reaches_the_real_child(self):
         # cat echoes stdin to stdout; the pty's own line-discipline echo would
         # double it, so disable that and read raw instead of relying on exact

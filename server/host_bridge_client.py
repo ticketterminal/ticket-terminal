@@ -165,6 +165,13 @@ def spawn(cmd: list[str], cwd: str | None):
     if not reply or not reply.get("ok"):
         conn.close()
         return None, None
+    # The 5s timeout from _connect() is right for a quick request/reply, but
+    # from here on this same connection IS the relay, alive for the session's
+    # whole lifetime — a terminal sitting idle at a prompt for minutes is
+    # normal, not a dead connection. Verified live: without this, the relay's
+    # conn.recv() timed out after 5s of no new output and tore the session
+    # down, even though claude itself was still running fine.
+    conn.settimeout(None)
     local_end, remote_end = socket.socketpair()
     master_fd = local_end.detach()  # a bare fd now; local_end no longer owns/closes it
     handle = HostProcessHandle(reply["session"], conn, remote_end)
