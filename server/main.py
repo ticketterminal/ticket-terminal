@@ -1158,6 +1158,11 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
     is_reconnect = False
     master_fd = None
     proc = None
+    # A bridged session's real PTY device only exists on the host, so resizing
+    # it is a request (HostProcessHandle.resize), not a local ioctl — this is
+    # set alongside proc/master_fd in both the reconnect and new-process
+    # branches below, to whichever of the two applies.
+    resize = None
 
     stale_ws = None
     stale_reader_task = None
@@ -1213,6 +1218,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
             is_reconnect = True
             proc = proc_info["proc"]
             master_fd = proc_info["master_fd"]
+            resize = proc_info.get("resize")
             stale_ws = proc_info.get("ws")
             stale_reader_task = proc_info.get("reader_task")
         else:
@@ -1244,9 +1250,10 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
 
             agent_cmd[0] = executable
             master_fd, proc = _spawn_agent(agent_cmd, cwd, bridged)
+            resize = proc.resize if bridged else (lambda rows, cols, fd=master_fd: agent_launch.set_winsize(fd, rows, cols))
 
             # Register this process as running in the background
-            running_processes[process_key] = {"proc": proc, "master_fd": master_fd, "draft": pending_draft}
+            running_processes[process_key] = {"proc": proc, "master_fd": master_fd, "resize": resize, "draft": pending_draft}
 
         # Claim ownership right here, atomically with the check above.
         reader_task = asyncio.create_task(read_pty())
@@ -1285,7 +1292,8 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
         # resize is guaranteed to differ and trigger a real repaint of the current
         # screen — not a replay of history, just what's on screen right now.
         try:
-            agent_launch.set_winsize(master_fd, 1, 1)
+            if resize:
+                resize(1, 1)
         except Exception:
             pass
 
@@ -1315,7 +1323,8 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 except OSError:
                     pass
             elif kind == "resize":
-                agent_launch.set_winsize(master_fd, payload.get("rows", 30), payload.get("cols", 100))
+                if resize:
+                    resize(payload.get("rows", 30), payload.get("cols", 100))
     except WebSocketDisconnect:
         pass
     finally:
