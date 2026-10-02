@@ -7,7 +7,7 @@
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl ca-certificates xz-utils git openssh-client ripgrep \
+      curl ca-certificates xz-utils git openssh-client ripgrep procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Node, straight from nodejs.org's own distribution (no third-party apt repo) —
@@ -26,6 +26,15 @@ RUN NODE_ARCH=$([ "$(uname -m)" = "aarch64" ] && echo arm64 || echo x64) \
 # Both agent CLIs, via their own official installers — see the README's Docker
 # section for why these are baked into the image while auth/config (~/.claude,
 # ~/.codex) comes from the bind-mounted host $HOME instead.
+#
+# DISABLE_UPDATES: this image already pins claude's version at build time (bump it
+# by rebuilding), so the npm-installed binary should never try to self-update —
+# verified live: npm's global prefix here is only writable by the uid that ran this
+# RUN (root), while the container runs as whatever arbitrary host uid owns the
+# bind-mounted $HOME (see the codex chmod below for the same constraint), so an
+# update attempt just fails with a "no write permission to npm prefix" error on
+# every session start instead of silently no-op-ing.
+ENV DISABLE_UPDATES=1
 RUN npm install -g @anthropic-ai/claude-code codeburn \
     # CODEX_HOME=/opt/codex-home for the INSTALL only, not a persistent ENV —
     # the installer's real payload must land somewhere every --user can reach

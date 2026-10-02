@@ -1218,13 +1218,20 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                     db.update_ticket(key, {"claudeSessionId": session_id})
                 agent_cmd = ["claude", "--session-id", session_id] if is_new_session else ["claude", "--resume", session_id]
             elif session_id:
-                agent_cmd = ["codex", "resume", session_id]
+                # --no-daemon: this embedded terminal already manages the process's
+                # lifecycle itself (one PTY per ticket, tracked in running_processes) —
+                # it gets nothing from codex's shared app-server daemon, and that
+                # daemon's own startup health check shells out to `ps`, which plenty
+                # of minimal/container environments don't have (verified live: fails
+                # with "No such file or directory" there and leaves the opening
+                # prompt stuck as an unsent draft instead of landing as a real message).
+                agent_cmd = ["codex", "--no-daemon", "resume", session_id]
             else:
                 marker = marker or "[Ticket Terminal " + str(uuid.uuid4()) + "]"
                 db.update_ticket(key, {"codexSessionMarker": marker})
                 prompt = marker + " Work on " + key + ": " + ticket.get("summary", "") + "\n" + ticket.get("url", "")
                 pending_draft = prompt
-                agent_cmd = ["codex"]
+                agent_cmd = ["codex", "--no-daemon"]
 
             agent_cmd[0] = executable
             master_fd, slave_fd = pty.openpty()
