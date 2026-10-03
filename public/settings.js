@@ -191,6 +191,15 @@ async function renderJiraForm(){
   projectInput.value = settings.jira.projectKey || "";
   jiraFormEl.appendChild(buildSettingsRow("Project key", projectInput));
 
+  const syncLimitInput = document.createElement("input");
+  syncLimitInput.type = "number"; syncLimitInput.min = "1"; syncLimitInput.placeholder = "50";
+  syncLimitInput.value = settings.jira.syncLimit || "";
+  jiraFormEl.appendChild(buildSettingsRow("Tickets to sync", syncLimitInput));
+  jiraFormEl.appendChild(el("div","settingshint",
+    "How many tickets one sync pulls in. On a brand-new board this is the initial import (your " +
+    "most recently created tickets, not the oldest); afterward it's the batch size for ongoing " +
+    "incremental syncs."));
+
   const hint = el("div","settingshint","Generate a token at id.atlassian.com/manage-profile/security/api-tokens. Values here override .env immediately — no restart.");
   jiraFormEl.appendChild(hint);
 
@@ -208,7 +217,8 @@ async function renderJiraForm(){
     showMsg(msg, "Saving…", "");
     try {
       await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({
-        jira: { baseUrl: baseUrlInput.value.trim(), email: emailInput.value.trim(), apiToken: tokenInput.value, projectKey: projectInput.value.trim() }
+        jira: { baseUrl: baseUrlInput.value.trim(), email: emailInput.value.trim(), apiToken: tokenInput.value,
+                projectKey: projectInput.value.trim(), syncLimit: syncLimitInput.value.trim() }
       })});
       showMsg(msg, "Saved ✓", "ok");
       await renderJiraForm(); // re-fetch so the token preview reflects what's actually stored
@@ -224,7 +234,14 @@ async function renderJiraForm(){
     showMsg(msg, "Testing…", "");
     try {
       const res = await apiJson("/api/sync-jira", {method:"POST"});
-      if (res.ok) showMsg(msg, "Connected ✓ — checked " + (res.checked || 0) + " ticket" + (res.checked === 1 ? "" : "s") + ".", "ok");
+      if (res.ok){
+        const added = (res.added || []).length;
+        showMsg(msg, "Connected ✓ — imported " + added + " new ticket" + (added === 1 ? "" : "s") +
+          ", checked " + (res.checked || 0) + " total.", "ok");
+        // This can be a real initial import — reload the (currently hidden) board now rather
+        // than leaving it stale until the next 60s poll or a manual "‹ Back to chart".
+        await reloadBoard();
+      }
       else showMsg(msg, "Failed: " + res.error, "err");
     } catch (e) {
       showMsg(msg, "Failed: " + e.message, "err");
