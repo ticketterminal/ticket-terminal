@@ -71,13 +71,14 @@ Two ways to run it: directly with Python, or in Docker. Either way you end up wi
 
 ### Option 1: Python
 
-Requirements: Python 3.12, and the [`claude`](https://docs.claude.com/en/docs/claude-code) and/or
+Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/getting-started/installation/), and the
+[`claude`](https://docs.claude.com/en/docs/claude-code) and/or
 [`codex`](https://learn.chatgpt.com/docs/codex/cli) CLI, signed in. Optional: Node.js 22.13+ for
 cost badges, and a Jira or Notion account for ticket sync.
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv venv && uv pip install --require-hashes -r requirements.txt
+source .venv/bin/activate
 python server/main.py
 ```
 
