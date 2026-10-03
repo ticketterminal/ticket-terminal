@@ -31,7 +31,9 @@ SECRET_FIELDS = {
 
 def _empty():
     return {
-        "jira": {"baseUrl": "", "email": "", "apiToken": "", "projectKey": ""},
+        # syncLimit: how many tickets one discovery call pulls — "" means jira_sync's own
+        # default (see jira_sync.DEFAULT_SYNC_LIMIT).
+        "jira": {"baseUrl": "", "email": "", "apiToken": "", "projectKey": "", "syncLimit": ""},
         "notion": {
             # OAuth app credentials (a "public integration" in Notion's terms).
             "clientId": "", "clientSecret": "", "redirectUri": "",
