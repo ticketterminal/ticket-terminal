@@ -13,6 +13,12 @@ services:
     ports:
       - "127.0.0.1:4173:4173" # loopback only — never drop the "127.0.0.1:" prefix
     user: "${UID}:${GID}"
+    extra_hosts:
+      # host.docker.internal is wired up by default on Docker Desktop (macOS/Windows);
+      # this line is what makes it resolve on native Linux Docker too, for the
+      # optional host-native-agents bridge (README's "Docker" section) — a no-op
+      # there if you never set WMP_HOST_BRIDGE_PORT.
+      - "host.docker.internal:host-gateway"
     volumes:
       # Ticket workDirs, and ~/.claude, ~/.codex, ~/.ssh, ~/.aws, ~/.kube — whatever
       # the agent needs to run real commands against your real repos, at the same
