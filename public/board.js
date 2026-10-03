@@ -13,6 +13,7 @@ import { wireRouterUI, renderRoute } from "./router.js";
 import { wireCategoryControls } from "./lanes.js";
 import { wireSettingsUI } from "./settings.js";
 import { initWorkspaceFromRoute, loadWorkspaces, loadWorkspaceBoard, wireWorkspaceUI, activeWorkspaceSlug, syncIfStale } from "./workspaces.js";
+import { initHelp } from "./help.js";
 
 // Before anything fetches: a `#/w/<slug>/…` deep link has to be reflected in
 // state.workspaceSlug (and so in every `?w=`) from the very first request on.
@@ -24,6 +25,7 @@ wireRouterUI();
 wireSettingsUI();
 wireCategoryControls();
 wireWorkspaceUI();
+initHelp();
 
 const jiraScanHelp = document.querySelector("#ticketsSection .sectionhelp");
 jiraScanHelp.addEventListener("click", (event) => {
