@@ -39,13 +39,13 @@ class ProviderTests(unittest.TestCase):
 
     def test_codex_new_and_resume(self):
         command, updates = self.launch({'summary': 'Example'}, 'codex')
-        self.assertEqual(command, ['codex'])
+        self.assertEqual(command, ['codex', '--no-daemon'])
         self.assertIn('Work on TEST-1: Example', main.running_processes[self.process_key('TEST-1', 'codex')]['draft'])
         self.assertIn(self.process_key('TEST-1', 'codex'), main.running_processes)
         self.assertTrue(updates)
         main.running_processes.clear()
         command, _ = self.launch({'codexSessionId': 'saved-id'}, 'codex')
-        self.assertEqual(command, ['codex', 'resume', 'saved-id'])
+        self.assertEqual(command, ['codex', '--no-daemon', 'resume', 'saved-id'])
 
     def test_reopen_attaches_to_existing_codex_process(self):
         self.launch({'codexSessionId': 'saved-id'}, 'codex')
