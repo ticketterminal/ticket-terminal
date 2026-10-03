@@ -1240,13 +1240,17 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 # of minimal/container environments don't have (verified live: fails
                 # with "No such file or directory" there and leaves the opening
                 # prompt stuck as an unsent draft instead of landing as a real message).
-                agent_cmd = ["codex", "--no-daemon", "resume", session_id]
+                # Only applies to the container's own codex build: a bridged (host-
+                # native) codex runs on a real OS with a real `ps`, and newer codex
+                # releases dropped the flag entirely (verified live: "unexpected
+                # argument '--no-daemon' found" hard-errors the whole session).
+                agent_cmd = ["codex", "resume", session_id] if bridged else ["codex", "--no-daemon", "resume", session_id]
             else:
                 marker = marker or "[Ticket Terminal " + str(uuid.uuid4()) + "]"
                 db.update_ticket(key, {"codexSessionMarker": marker})
                 prompt = marker + " Work on " + key + ": " + ticket.get("summary", "") + "\n" + ticket.get("url", "")
                 pending_draft = prompt
-                agent_cmd = ["codex", "--no-daemon"]
+                agent_cmd = ["codex"] if bridged else ["codex", "--no-daemon"]
 
             agent_cmd[0] = executable
             master_fd, proc = _spawn_agent(agent_cmd, cwd, bridged)
