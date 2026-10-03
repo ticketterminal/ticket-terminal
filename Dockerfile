@@ -55,8 +55,12 @@ RUN npm install -g @anthropic-ai/claude-code codeburn \
 
 WORKDIR /app
 
+# uv, straight from Astral's own distroless image (no pip bootstrap needed) —
+# --system installs into this image's one Python instead of a venv, since the
+# container has no separate interpreter to isolate from.
+COPY --from=ghcr.io/astral-sh/uv:0.12.22 /uv /usr/local/bin/uv
 COPY requirements.txt .
-RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+RUN uv pip install --system --no-cache --require-hashes -r requirements.txt
 
 COPY server/ server/
 COPY public/ public/
