@@ -39,11 +39,12 @@ class ProviderTests(unittest.TestCase):
 
     def process_key(self, key, provider): return main.process_key_for(key, provider)
 
-    def launch(self, ticket, provider):
+    def launch(self, ticket, provider, codex_supports_no_daemon=True):
         proc = MagicMock(); proc.poll.return_value = None
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': ticket}}), \
              patch.object(main.db, 'update_ticket') as update, \
              patch.object(main, '_resolve_agent', side_effect=lambda provider: (provider, False)), \
+             patch.object(main, '_codex_supports_no_daemon', return_value=codex_supports_no_daemon), \
              patch.object(main.pty, 'openpty', return_value=(100, 101)), \
              patch.object(main.agent_launch, 'set_winsize'), patch.object(main.os, 'close'), \
              patch.object(main.subprocess, 'Popen', return_value=proc) as launch:
@@ -59,6 +60,17 @@ class ProviderTests(unittest.TestCase):
         main.running_processes.clear()
         command, _ = self.launch({'codexSessionId': 'saved-id'}, 'codex')
         self.assertEqual(command, ['codex', '--no-daemon', 'resume', 'saved-id'])
+
+    def test_codex_omits_no_daemon_when_local_binary_does_not_support_it(self):
+        # The exact bug this guards against: a genuine native/non-Docker install
+        # takes this same local (non-bridged) spawn path, and a newer codex
+        # release there hard-errors on --no-daemon ("unexpected argument
+        # '--no-daemon' found") rather than merely ignoring it.
+        command, _ = self.launch({'summary': 'Example'}, 'codex', codex_supports_no_daemon=False)
+        self.assertEqual(command, ['codex'])
+        main.running_processes.clear()
+        command, _ = self.launch({'codexSessionId': 'saved-id'}, 'codex', codex_supports_no_daemon=False)
+        self.assertEqual(command, ['codex', 'resume', 'saved-id'])
 
     def test_reopen_attaches_to_existing_codex_process(self):
         self.launch({'codexSessionId': 'saved-id'}, 'codex')
@@ -143,6 +155,7 @@ class ProviderTests(unittest.TestCase):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
              patch.object(main.db, 'update_ticket'), \
              patch.object(main, '_resolve_agent', return_value=('codex', False)), \
+             patch.object(main, '_codex_supports_no_daemon', return_value=True), \
              patch.object(main.pty, 'openpty', return_value=(100, 101)), \
              patch.object(main.os, 'close'), \
              patch.object(main.agent_launch, 'set_winsize') as set_winsize, \
@@ -168,6 +181,20 @@ class ProviderTests(unittest.TestCase):
             asyncio.run(main.terminal_ws(ws, 'TEST-1', 'shell'))
             launch.assert_not_called()
             self.assertTrue(ws.closed)
+
+    def test_codex_supports_no_daemon_reads_the_real_help_text(self):
+        main._codex_supports_no_daemon.cache_clear()
+        with patch.object(main.subprocess, 'run', return_value=MagicMock(stdout='Usage: codex [OPTIONS]\n  --no-daemon  ...')):
+            self.assertTrue(main._codex_supports_no_daemon('/some/codex'))
+        main._codex_supports_no_daemon.cache_clear()
+        with patch.object(main.subprocess, 'run', return_value=MagicMock(stdout='Usage: codex [OPTIONS]\n  --no-persist  ...')):
+            self.assertFalse(main._codex_supports_no_daemon('/some/other/codex'))
+
+    def test_codex_supports_no_daemon_defaults_false_if_the_binary_cannot_run(self):
+        main._codex_supports_no_daemon.cache_clear()
+        with patch.object(main.subprocess, 'run', side_effect=FileNotFoundError()):
+            self.assertFalse(main._codex_supports_no_daemon('/missing/codex'))
+        main._codex_supports_no_daemon.cache_clear()
 
     def test_costs_keep_both_providers(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets':{'TEST-1':{'claudeSessionId':'a','codexSessionId':'b'}}}), \
