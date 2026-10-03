@@ -47,6 +47,10 @@ def _empty():
             "sprintActiveMarker": "", "sprintActiveMarkerSource": "",
         },
         "memoryDir": "",
+        # [{"path": str, "categoryId": str}] — zero or more directories, each optionally tied to
+        # a category (see memory_analysis.memory_dirs_info for the precedence rule against the
+        # legacy single memoryDir above). Replaced wholesale on save, same as categories.json.
+        "memoryDirs": [],
     }
 
 
@@ -90,6 +94,8 @@ def update(patch):
             settings[section][field] = value
     if "memoryDir" in (patch or {}):
         settings["memoryDir"] = patch["memoryDir"]
+    if "memoryDirs" in (patch or {}):
+        settings["memoryDirs"] = patch["memoryDirs"]
     write(settings)
     return settings
 

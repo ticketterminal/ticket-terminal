@@ -177,6 +177,7 @@ export async function loadWorkspaceBoard(afterCategories){
     state.jiraBaseUrl = (configRes && configRes.jiraBaseUrl) || "";
     state.jiraConfigured = !!(configRes && configRes.jiraConfigured);
     state.notionConfigured = !!(configRes && configRes.notionConfigured);
+    state.memoryNodeCount = (configRes && configRes.memoryNodeCount) || 0;
   } catch (error) { /* leave categories/jiraBaseUrl/*Configured at their defaults — board renders with no lanes/no Jira links */ }
   buildCategoryUI();
   if (afterCategories) afterCategories();

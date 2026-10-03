@@ -112,19 +112,25 @@ export async function renderDetail(cat){
     });
   }
 
-  // Show related memories in a table. state.lastMemoryNodes is normally
-  // populated by the memory-graph page (see memory-graph.js) — but a viewer
-  // can land here via a category card without ever visiting #/memory first,
-  // so fetch it here too if it's still empty, rather than silently rendering
-  // a table with headers and no rows.
-  if (cat.memories && cat.memories.length && state.lastMemoryNodes.length === 0){
+  // Show related memories in a table: hand-listed in cat.memories, or because the directory
+  // a file lives in was assigned to this category on the Settings page (sourceCategoryId —
+  // see server/memory_analysis.py's read_graph). state.lastMemoryNodes is normally populated
+  // by the memory-graph page (see memory-graph.js) — but a viewer can land here via a category
+  // card without ever visiting #/memory first, so fetch it here too if it's still empty (not
+  // gated on cat.memories.length — a directory assignment can be the *only* reason this
+  // category has any related memories at all).
+  if (state.lastMemoryNodes.length === 0){
     const res = await apiJson("/api/memory-graph").catch(() => null);
     if (res && res.ok){
       state.lastMemoryNodes = res.nodes;
       state.lastMemoryEdges = res.edges;
     }
   }
-  if (cat.memories && cat.memories.length){
+  const relatedIds = [...new Set([
+    ...(cat.memories || []),
+    ...state.lastMemoryNodes.filter(n => n.sourceCategoryId === cat.id).map(n => n.id),
+  ])];
+  if (relatedIds.length){
     const memSection = el("div");
     memSection.style.marginTop = "26px";
     const title = el("h3",null,"Related memories");
@@ -153,7 +159,7 @@ export async function renderDetail(cat){
       cell.style.letterSpacing = ".04em";
     });
 
-    cat.memories.forEach(memId => {
+    relatedIds.forEach(memId => {
       const memNode = state.lastMemoryNodes.find(n => n.id === memId);
       if (!memNode) return;
       const row = table.insertRow();
