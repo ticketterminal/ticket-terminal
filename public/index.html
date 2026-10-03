@@ -155,7 +155,7 @@
     <button type="button" class="backlink" id="settingsBackBtn">‹ Back to chart</button>
     <div class="detailhead">
       <h1>Settings</h1>
-      <span class="sub">Categories, people and teams, the Jira and Notion connections, and the memory-graph knowledge source — editable here, changes apply immediately, no restart needed.</span>
+      <span class="sub">The Jira/Notion connections, the memory-graph knowledge source, Claude/Codex, categories, and people and teams — editable here, changes apply immediately, no restart needed.</span>
     </div>
 
     <details class="sectiondetails" open>
@@ -169,6 +169,20 @@
       <summary class="sectionhead">Notion connection</summary>
       <div class="lane">
         <div class="lanebody settingsform" id="settingsNotionForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Memory source</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsMemoryForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Connect Claude / Codex</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsProvidersForm"></div>
       </div>
     </details>
 
@@ -204,13 +218,6 @@
       <summary class="sectionhead">Workspaces</summary>
       <div class="lane">
         <div class="lanebody settingsform" id="settingsWorkspacesForm"></div>
-      </div>
-    </details>
-
-    <details class="sectiondetails" open>
-      <summary class="sectionhead">Memory source</summary>
-      <div class="lane">
-        <div class="lanebody settingsform" id="settingsMemoryForm"></div>
       </div>
     </details>
   </div>

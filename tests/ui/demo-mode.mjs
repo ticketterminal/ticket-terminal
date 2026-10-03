@@ -105,23 +105,28 @@ buildCategoryUI();
 // --- getting-started checklist: live status, dismiss persists -------------
 {
   categoryManagementState.data.onboarded=false;
-  state.jiraConfigured=false; state.notionConfigured=false;
+  state.jiraConfigured=false; state.notionConfigured=false; state.memoryNodeCount=0;
   await initCategoryManagement(); await settle();
   const gs=document.getElementById('gettingStarted');
-  assert.equal(gs.hidden,false,'not onboarded and no tracker — checklist shows');
+  assert.equal(gs.hidden,false,'not onboarded, no tracker, no memory files — checklist shows');
   const items=[...document.querySelectorAll('#gettingStartedList li')];
   assert.equal(items.filter(li=>li.className==='done').length,0,'nothing is done yet');
-  assert.ok(items.some(li=>li.textContent.includes('Pick your work role')));
-  assert.ok(items.some(li=>li.textContent.includes('Connect Jira or Notion')));
-  assert.ok(items.some(li=>li.textContent.includes('Sign in')),'the CLI sign-in line is always shown, never as a checkmark');
+  assert.ok(items.some(li=>li.textContent.includes('1.') && li.textContent.includes('Pick your work role')));
+  assert.ok(items.some(li=>li.textContent.includes('2.') && li.textContent.includes('Connect Jira or Notion')));
+  assert.ok(items.some(li=>li.textContent.includes('3.') && li.textContent.includes('Set up a memory store')));
+  assert.ok(items.some(li=>li.textContent.includes('4.') && li.textContent.includes('Sign in')),'the CLI sign-in line is always shown, never as a checkmark, but is still numbered and clickable');
 
   categoryManagementState.data.onboarded=true;
   state.jiraConfigured=true;
   await initCategoryManagement(); await settle();
-  assert.equal(document.getElementById('gettingStarted').hidden,true,'fully onboarded (role picked + tracker connected) auto-hides the checklist');
+  assert.equal(document.getElementById('gettingStarted').hidden,false,'role + tracker alone is not enough anymore — memory store is still unset');
+
+  state.memoryNodeCount=1;
+  await initCategoryManagement(); await settle();
+  assert.equal(document.getElementById('gettingStarted').hidden,true,'fully onboarded (role + tracker + a real memory file) auto-hides the checklist');
 
   categoryManagementState.data.onboarded=false;
-  state.jiraConfigured=false;
+  state.jiraConfigured=false; state.memoryNodeCount=0;
   await initCategoryManagement(); await settle();
   assert.equal(document.getElementById('gettingStarted').hidden,false,'back to not-done — it reappears, same as the existing role-reminder banner');
   document.getElementById('hideGettingStartedBtn').click();

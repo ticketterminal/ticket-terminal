@@ -359,6 +359,9 @@
   .memorycontrols .typefilter{font-size:11px;padding:4px 8px;border:1px dashed var(--line);border-radius:3px;background:transparent;color:inherit;cursor:pointer;}
   .memorycontrols .typefilter.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
   .memorycontrols .spacingslider{width:130px;accent-color:var(--accent);}
+  .memorycontrols .addmemoryform{display:flex;gap:6px;align-items:center;}
+  .memorycontrols .addmemoryinput{font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:inherit;width:160px;}
+  .memorycontrols .addmemorydirsel{font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:3px;background:var(--surface);color:inherit;max-width:260px;}
   .memorywrap{display:flex;gap:16px;height:min(72vh,720px);margin-top:12px;}
   .memorycanvas{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);}
   .memorypanel{flex:0 0 340px;border:1px solid var(--line);border-radius:6px;background:var(--surface);padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
@@ -489,6 +492,8 @@
   .categoryeditlistfields label{font-family:"IBM Plex Mono",monospace;font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-muted);display:flex;align-items:center;gap:6px;flex:1 1 220px;}
   .categoryeditlistfields input{font-family:"Public Sans",sans-serif;font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:var(--surface-2);color:var(--ink);flex:1 1 auto;min-width:0;}
   .categoryeditdelete{margin-left:auto;}
+  .memorydirfields input{flex:2 1 320px;font-family:"IBM Plex Mono",monospace;}
+  .memorydirfields select{flex:0 1 160px;text-transform:none;font-family:"Public Sans",sans-serif;font-size:12.5px;}
   .termhost .xterm-viewport::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.45);}
 
 .terminal-controls{display:flex;gap:8px;flex-wrap:wrap;padding:10px;}

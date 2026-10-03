@@ -1,15 +1,15 @@
-// Settings page: editable categories, Jira + Notion connections, and the memory-source
-// directory — all editable from the running app instead of hand-edited JSON/
-// .env files. See server/settings_store.py for the precedence rule (a
-// Settings-page save wins over the corresponding env var, applied immediately,
-// no restart needed).
+// Settings page: editable categories, Jira + Notion connections, the memory-source
+// directory, the Claude/Codex CLI detection status, and people/teams — all editable
+// from the running app instead of hand-edited JSON/.env files. See
+// server/settings_store.py for the precedence rule (a Settings-page save wins over
+// the corresponding env var, applied immediately, no restart needed).
 import { categoryRevision, renderCategoryManagement, refreshCategoryManagement } from "./category-management.js";
 import { state } from "./state.js";
 import { el } from "./dom-utils.js";
 import { apiJson } from "./api.js";
 import { reloadBoard } from "./polling.js";
 import { buildCategoryUI, renderTickets } from "./lanes.js";
-import { renderWorkspacesForm } from "./workspaces.js";
+import { renderWorkspacesForm, routeHash } from "./workspaces.js";
 
 const catListEl = document.getElementById("settingsCategoriesList");
 const catCountEl = document.getElementById("settingsCatCount");
@@ -19,6 +19,7 @@ const saveCategoriesBtn = document.getElementById("settingsSaveCategoriesBtn");
 const jiraFormEl = document.getElementById("settingsJiraForm");
 const notionFormEl = document.getElementById("settingsNotionForm");
 const memoryFormEl = document.getElementById("settingsMemoryForm");
+const providersFormEl = document.getElementById("settingsProvidersForm");
 
 const STATUS_OPTIONS = ["covered", "partial", "gap"];
 
@@ -234,29 +235,112 @@ async function renderJiraForm(){
   });
 }
 
-async function renderMemoryForm(){
+let draftMemoryDirs = [];
+
+function buildMemoryDirRow(dir, index, onChange){
+  const row = el("div","categoryeditrow");
+  const fields = el("div","categoryeditfields memorydirfields");
+
+  const pathInput = document.createElement("input");
+  pathInput.placeholder = "/path/to/an/existing/memory/folder";
+  pathInput.value = dir.path || "";
+  pathInput.addEventListener("input", () => { dir.path = pathInput.value; });
+  fields.appendChild(pathInput);
+
+  const catSel = document.createElement("select");
+  catSel.title = "Optional — bulk-tags every file in this directory as \"used by\" that category, without editing categories.json";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = ""; noneOpt.textContent = "— Unassigned —";
+  if (!dir.categoryId) noneOpt.selected = true;
+  catSel.appendChild(noneOpt);
+  state.categories.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.id; opt.textContent = c.name;
+    if (dir.categoryId === c.id) opt.selected = true;
+    catSel.appendChild(opt);
+  });
+  catSel.addEventListener("change", () => { dir.categoryId = catSel.value; });
+  fields.appendChild(catSel);
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button"; deleteBtn.className = "copybtn categoryeditdelete"; deleteBtn.textContent = "Remove";
+  deleteBtn.addEventListener("click", () => {
+    draftMemoryDirs.splice(index, 1);
+    onChange();
+  });
+  fields.appendChild(deleteBtn);
+
+  row.appendChild(fields);
+  return row;
+}
+
+export async function renderMemoryForm(){
   memoryFormEl.innerHTML = "Loading…";
-  const settings = await apiJson("/api/settings").catch(() => null);
+  const [settings, graph] = await Promise.all([
+    apiJson("/api/settings").catch(() => null),
+    apiJson("/api/memory-graph").catch(() => null),
+  ]);
   memoryFormEl.innerHTML = "";
   if (!settings){
     memoryFormEl.appendChild(el("div","empty-state","Couldn't load current settings — is the server running?"));
     return;
   }
 
-  const sourceLabel = { settings: "set on this page", env: "from WMP_MEMORY_DIR", default: "derived default (no override set)" }[settings.memoryDirSource] || settings.memoryDirSource;
-  const dirInput = document.createElement("input");
-  dirInput.placeholder = "/path/to/your/memory/folder";
-  dirInput.value = settings.memoryDirSource === "settings" ? settings.memoryDir : "";
-  memoryFormEl.appendChild(buildSettingsRow("Memory folder path", dirInput));
-  memoryFormEl.appendChild(el("div","settingshint","Currently reading from: " + settings.memoryDir + " (" + sourceLabel + "). Leave blank here to keep using that."));
+  // Only rows explicitly saved from this page populate the editor — the resolved
+  // settings.memoryDirs below always has at least one entry (it falls back to
+  // WMP_MEMORY_DIR or the derived default), and that fallback is shown as read-only
+  // info, not pre-filled into the editable list, same distinction the old single-field
+  // version drew between "what this form set" and "what's actually being read".
+  draftMemoryDirs = settings.memoryDirs.filter(d => d.source === "settings").map(d => ({ path: d.path, categoryId: d.categoryId || "" }));
+
+  const listEl = el("div","lanebody");
+  function renderList(){
+    listEl.innerHTML = "";
+    if (draftMemoryDirs.length === 0){
+      listEl.appendChild(el("span","empty","No directories configured yet — see the default below. Add one to point at your own."));
+    } else {
+      draftMemoryDirs.forEach((dir, i) => listEl.appendChild(buildMemoryDirRow(dir, i, renderList)));
+    }
+  }
+  renderList();
+  memoryFormEl.appendChild(listEl);
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button"; addBtn.className = "copybtn"; addBtn.textContent = "+ Add directory";
+  addBtn.addEventListener("click", () => { draftMemoryDirs.push({ path: "", categoryId: "" }); renderList(); });
+  memoryFormEl.appendChild(addBtn);
+
+  memoryFormEl.appendChild(el("div","settingshint","Currently reading from: " +
+    settings.memoryDirs.map(d => d.path).join(", ") + "."));
+
+  const nodeCount = (graph && graph.ok) ? graph.nodes.length : null;
+  const statusRow = el("div","settingshint");
+  if (nodeCount === null){
+    statusRow.textContent = "Couldn't check how many memory files are there right now.";
+  } else if (nodeCount === 0){
+    statusRow.appendChild(el("span",null,"No memory files there yet. "));
+    const createLink = el("button","gettingstartedbtn","Create your first one in the memory graph →");
+    createLink.type = "button";
+    createLink.addEventListener("click", () => { location.hash = routeHash("#/memory"); });
+    statusRow.appendChild(createLink);
+  } else {
+    statusRow.textContent = nodeCount + " memory file" + (nodeCount === 1 ? "" : "s") +
+      " found across " + settings.memoryDirs.length + " director" + (settings.memoryDirs.length === 1 ? "y" : "ies") + ".";
+  }
+  memoryFormEl.appendChild(statusRow);
 
   const explain = el("div","settingsexplain");
   explain.innerHTML =
-    "<strong>What memory is:</strong> a folder of <code>.md</code> files — this app's own " +
-    "knowledge base, not something tied to Claude. It defaults to reusing Claude Code's own " +
-    "per-project memory location for convenience, but any folder works, and any LLM vendor's " +
-    "agent (Claude, Codex, a future local model) can read or write it. The graph and the " +
-    "category detail pages read every file in it. Each file may start with YAML frontmatter " +
+    "<strong>What memory is:</strong> one or more folders of <code>.md</code> files — this app's " +
+    "own knowledge base, not something tied to Claude. With nothing configured above, it defaults " +
+    "to reusing Claude Code's own per-project memory location for convenience, but any folder " +
+    "works (including ones that already have memory files in them), and any LLM vendor's agent " +
+    "(Claude, Codex, a future local model) can read or write it. Assigning a directory to a " +
+    "category above is optional — every file in it still joins the one unified graph either way; " +
+    "the assignment just also marks those files \"used by\" that category, same as hand-listing " +
+    "their ids would. Two directories with a same-named file aren't an error — whichever is " +
+    "listed first above wins. The graph and the category detail pages read every file in every " +
+    "configured directory. Each file may start with YAML frontmatter " +
     "(optional, but gives it a friendly name/description/type):<br><br>" +
     "<code>---<br>name: my-memory-id<br>description: one-line summary shown in the graph<br>" +
     "metadata:<br>&nbsp;&nbsp;type: user | feedback | project | reference<br>---</code><br><br>" +
@@ -269,7 +353,7 @@ async function renderMemoryForm(){
 
   const actions = el("div","settingsactions");
   const saveBtn = document.createElement("button");
-  saveBtn.type = "button"; saveBtn.className = "refreshbtn"; saveBtn.textContent = "Save memory source";
+  saveBtn.type = "button"; saveBtn.className = "refreshbtn"; saveBtn.textContent = "Save memory sources";
   const msg = el("span","settingsmsg","");
   actions.appendChild(saveBtn); actions.appendChild(msg);
   memoryFormEl.appendChild(actions);
@@ -278,7 +362,10 @@ async function renderMemoryForm(){
     saveBtn.disabled = true;
     showMsg(msg, "Saving…", "");
     try {
-      await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({ memoryDir: dirInput.value.trim() })});
+      const memoryDirs = draftMemoryDirs
+        .filter(d => (d.path || "").trim())
+        .map(d => ({ path: d.path.trim(), categoryId: d.categoryId || "" }));
+      await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({ memoryDirs })});
       showMsg(msg, "Saved ✓", "ok");
       await renderMemoryForm();
     } catch (e) {
@@ -287,6 +374,42 @@ async function renderMemoryForm(){
       saveBtn.disabled = false;
     }
   });
+}
+
+// Claude/Codex: unlike Jira/Notion there is no token to paste or OAuth flow to run from
+// inside this app — the CLI itself owns its own sign-in (`claude login` / `codex login`,
+// run by hand in a real terminal). All this section can do is report what
+// /api/terminal-providers (server/main.py's agent_executable) already resolves: whether each
+// binary is reachable on PATH at all, not whether it's actually signed in.
+async function renderProvidersForm(){
+  if (!providersFormEl) return;
+  providersFormEl.innerHTML = "Loading…";
+  const res = await apiJson("/api/terminal-providers").catch(() => null);
+  providersFormEl.innerHTML = "";
+  const providers = (res && res.providers) || [];
+
+  [["claude","Claude Code"], ["codex","Codex"]].forEach(([id, label]) => {
+    const row = el("div","settingshint");
+    const found = providers.includes(id);
+    row.textContent = (found ? "✓ " : "✗ ") + label + (found ? " detected on PATH." : " not found on PATH.");
+    row.className = "settingsmsg " + (found ? "ok" : "err");
+    providersFormEl.appendChild(row);
+  });
+
+  const explain = el("div","settingsexplain");
+  explain.innerHTML =
+    "Ticket Terminal launches whichever CLI you already have installed and signed in — " +
+    "<code>claude login</code> or <code>codex login</code> happens in your own terminal, " +
+    "outside this app. There's nothing to connect from in here; this just confirms the CLI " +
+    "is reachable. Open any ticket's terminal panel once you're signed in to start a session.";
+  providersFormEl.appendChild(explain);
+
+  const actions = el("div","settingsactions");
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button"; refreshBtn.className = "refreshbtn"; refreshBtn.textContent = "Refresh";
+  refreshBtn.addEventListener("click", renderProvidersForm);
+  actions.appendChild(refreshBtn);
+  providersFormEl.appendChild(actions);
 }
 
 // Notion: a personal (internal-integration) token pasted directly is the
@@ -695,6 +818,7 @@ export async function renderSettingsPage(){
   renderJiraForm();
   renderNotionForm();
   renderMemoryForm();
+  renderProvidersForm();
 }
 
 export function wireSettingsUI(){

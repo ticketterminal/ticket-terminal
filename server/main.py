@@ -458,6 +458,7 @@ def get_config():
         "jiraBaseUrl": jira_sync.get_config()["base_url"],
         "jiraConfigured": jira_sync.configured(),
         "notionConfigured": notion_sync.configured(),
+        "memoryNodeCount": len(memory_analysis.read_graph()["nodes"]),
     }
 
 
@@ -465,13 +466,13 @@ def get_config():
 def get_settings():
     """Effective config the Settings page displays — merges this workspace's settings.json
     over the .env fallback (see jira_sync.get_config / memory_analysis.
-    memory_dir_info for the precedence rule). The Jira API token is never
+    memory_dirs_info for the precedence rule). The Jira API token is never
     round-tripped back to the browser once saved — only whether one is set and
     a last-4-chars preview, matching the usual write-only-secret pattern."""
     jira = jira_sync.get_config()
     token = jira["api_token"]
     notion = notion_sync.get_config()
-    mem_info = memory_analysis.memory_dir_info()
+    mem_dirs = memory_analysis.memory_dirs_info()
     return {
         "jira": {
             "baseUrl": jira["base_url"],
@@ -494,8 +495,7 @@ def get_settings():
             "priorityProperty": notion["priority_property"],
             "lastOauthError": notion_sync.last_oauth_error,
         },
-        "memoryDir": str(mem_info["path"]),
-        "memoryDirSource": mem_info["source"],
+        "memoryDirs": [{"path": str(d["path"]), "categoryId": d["categoryId"], "source": d["source"]} for d in mem_dirs],
     }
 
 
@@ -729,6 +729,23 @@ def get_memory_graph():
     """The real memory corpus as a graph — see memory_analysis.read_graph."""
     try:
         return {"ok": True, **memory_analysis.read_graph()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/api/memory-graph")
+def post_memory_doc(body: dict = Body(...)):
+    """Starts a new memory file — the only create path there is (PUT above only ever edits an
+    existing one). See memory_analysis.create_doc."""
+    memory_id = (body.get("id") or "").strip()
+    try:
+        content = memory_analysis.create_doc(
+            memory_id, body.get("description", ""), body.get("type", ""), body.get("dirPath") or None)
+        return {"ok": True, "content": content}
+    except FileExistsError:
+        return {"ok": False, "error": "a memory file with that id already exists"}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 

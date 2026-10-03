@@ -42,30 +42,34 @@ function updateNotice(){
   host.appendChild(button(!current.onboarded?'Choose work role':'Review categories',()=>{ location.hash=routeHash('#/settings'); }));
 }
 // A brand-new install's path from "just installed" to "actually using it" —
-// role + tracker are each a real, checkable step; CLI sign-in is not
-// (terminal-providers only confirms a binary is on PATH, not that it's signed
-// in — see server/main.py's agent_executable), so that line stays static
-// instructions rather than a fake checkmark.
+// role, tracker, and memory are each a real, checkable step; CLI sign-in is
+// not (terminal-providers only confirms a binary is on PATH, not that it's
+// signed in — see server/main.py's agent_executable), so that row never gets
+// a checkmark even though it's clickable like the others.
 function updateGettingStarted(){
   const host=document.getElementById('gettingStarted');
   const list=document.getElementById('gettingStartedList');
   if (!host || !list || !current) return;
   const trackerConnected=state.jiraConfigured || state.notionConfigured;
+  const memorySetUp=state.memoryNodeCount > 0;
   let dismissed=false;
   try { dismissed=localStorage.getItem('wmp.hideGettingStarted')==='1'; } catch(e){}
-  host.hidden=dismissed || (current.onboarded && trackerConnected);
+  host.hidden=dismissed || (current.onboarded && trackerConnected && memorySetUp);
   if (host.hidden) return;
   list.replaceChildren();
   [
     {label:'Pick your work role', done:current.onboarded},
     {label:'Connect Jira or Notion', done:trackerConnected},
-  ].forEach(item => {
+    {label:'Set up a memory store', done:memorySetUp},
+  ].forEach((item, i) => {
     const li=el('li', item.done?'done':null);
-    if (item.done){ li.textContent='✓ '+item.label; }
-    else { li.appendChild(button('☐ '+item.label, ()=>{ location.hash=routeHash('#/settings'); }, 'gettingstartedbtn')); }
+    const prefix=(i+1)+'. ';
+    if (item.done){ li.textContent=prefix+'✓ '+item.label; }
+    else { li.appendChild(button(prefix+'☐ '+item.label, ()=>{ location.hash=routeHash('#/settings'); }, 'gettingstartedbtn')); }
     list.appendChild(li);
   });
-  const cliItem=el('li', null, '○ Sign in to the claude or codex CLI, then open any ticket to start a session.');
+  const cliItem=el('li');
+  cliItem.appendChild(button('4. ○ Sign in to the claude or codex CLI, then open any ticket to start a session.', ()=>{ location.hash=routeHash('#/settings'); }, 'gettingstartedbtn'));
   list.appendChild(cliItem);
 }
 async function applyResult(result){
