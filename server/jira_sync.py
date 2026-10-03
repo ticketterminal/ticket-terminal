@@ -198,12 +198,18 @@ def discover_new_tickets(db) -> dict:
          "description": _adf_to_text(issue.get("fields", {}).get("description"))}
         for issue in new_issues
     ]
+    category_error = None
     try:
         guesses = auto_categorize.classify_many(classify_candidates) if classify_candidates else {}
-    except Exception:
+    except Exception as error:
         # Same "never block the import" guarantee classify() used to give per-ticket — a
         # broken/unauthenticated CLI just means every ticket lands uncategorized, not unimported.
+        # The error itself is NOT silently dropped, though — see the returned categoryError:
+        # every ticket landing uncategorized with zero visible reason is its own bug (found by
+        # Ami testing this live: a container whose `claude` was never signed in imported every
+        # ticket with categories: [] and nothing anywhere said why).
         guesses = {}
+        category_error = str(error)
 
     added = []
     for issue in new_issues:
@@ -233,7 +239,7 @@ def discover_new_tickets(db) -> dict:
         })
         added.append(key)
 
-    return {"found": len(issues), "added": added}
+    return {"found": len(issues), "added": added, "categoryError": category_error}
 
 
 def sync_all_tickets(db) -> dict:
@@ -247,7 +253,9 @@ def sync_all_tickets(db) -> dict:
         raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
     c = get_config()
 
-    added = discover_new_tickets(db)["added"]
+    discovery = discover_new_tickets(db)
+    added = discovery["added"]
+    category_error = discovery.get("categoryError")
 
     data = db.read()
     keys = list(data["jiraTickets"].keys())
@@ -326,7 +334,7 @@ def sync_all_tickets(db) -> dict:
 
     return {
         "checked": len(keys), "updated": len(changed_keys), "changed": changed_keys,
-        "added": added, "tagged": tagged, "tagError": tag_error,
+        "added": added, "tagged": tagged, "tagError": tag_error, "categoryError": category_error,
     }
 
 
