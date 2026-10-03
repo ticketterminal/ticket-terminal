@@ -20,6 +20,7 @@ Docker section. Outside a container, leave this unset.
 """
 import asyncio
 import datetime
+import functools
 import json
 import mimetypes
 import os
@@ -866,6 +867,25 @@ def _resolve_agent(provider: str):
     return agent_launch.agent_executable(provider), False
 
 
+@functools.lru_cache(maxsize=None)
+def _codex_supports_no_daemon(executable: str) -> bool:
+    """Whether this resolved codex binary's own --help still lists --no-daemon.
+
+    Older codex releases need the flag (their app-server daemon's startup
+    health check shells out to `ps`, missing in plenty of minimal/container
+    environments) but newer releases dropped it entirely and hard-error with
+    "unexpected argument '--no-daemon' found" if it's passed regardless of
+    where codex is running. Checking the actual binary — once per path, since
+    a running server's resolved codex doesn't change version mid-process —
+    is the only way to get this right for both an old codex baked into the
+    Docker image and whatever version a native install happens to have."""
+    try:
+        result = subprocess.run([executable, "--help"], capture_output=True, text=True, timeout=5)
+        return "--no-daemon" in result.stdout
+    except Exception:
+        return False
+
+
 def _spawn_agent(cmd: list[str], cwd: str, bridged: bool):
     """(master_fd, proc) for a freshly started agent CLI — bridged spawns it on
     the host via host_bridge_client, local opens a PTY right here.
@@ -1234,24 +1254,20 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                     db.update_ticket(key, {"claudeSessionId": session_id})
                 agent_cmd = ["claude", "--session-id", session_id] if is_new_session else ["claude", "--resume", session_id]
             elif session_id:
-                # --no-daemon: this embedded terminal already manages the process's
-                # lifecycle itself (one PTY per ticket, tracked in running_processes) —
-                # it gets nothing from codex's shared app-server daemon, and that
-                # daemon's own startup health check shells out to `ps`, which plenty
-                # of minimal/container environments don't have (verified live: fails
-                # with "No such file or directory" there and leaves the opening
-                # prompt stuck as an unsent draft instead of landing as a real message).
-                # Only applies to the container's own codex build: a bridged (host-
-                # native) codex runs on a real OS with a real `ps`, and newer codex
-                # releases dropped the flag entirely (verified live: "unexpected
-                # argument '--no-daemon' found" hard-errors the whole session).
-                agent_cmd = ["codex", "resume", session_id] if bridged else ["codex", "--no-daemon", "resume", session_id]
+                # --no-daemon: see _codex_supports_no_daemon's docstring. Never needed
+                # when bridged (that codex runs on a real host OS with a real `ps`);
+                # otherwise only added if this resolved binary still accepts it —
+                # a genuine native/non-Docker install takes this same local-spawn
+                # path, not just the container's own bundled codex.
+                use_no_daemon = (not bridged) and _codex_supports_no_daemon(executable)
+                agent_cmd = ["codex", "--no-daemon", "resume", session_id] if use_no_daemon else ["codex", "resume", session_id]
             else:
                 marker = marker or "[Ticket Terminal " + str(uuid.uuid4()) + "]"
                 db.update_ticket(key, {"codexSessionMarker": marker})
                 prompt = marker + " Work on " + key + ": " + ticket.get("summary", "") + "\n" + ticket.get("url", "")
                 pending_draft = prompt
-                agent_cmd = ["codex"] if bridged else ["codex", "--no-daemon"]
+                use_no_daemon = (not bridged) and _codex_supports_no_daemon(executable)
+                agent_cmd = ["codex", "--no-daemon"] if use_no_daemon else ["codex"]
 
             agent_cmd[0] = executable
             master_fd, proc = _spawn_agent(agent_cmd, cwd, bridged)
