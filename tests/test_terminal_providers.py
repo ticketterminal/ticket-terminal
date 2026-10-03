@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -15,6 +16,18 @@ class Socket:
     async def send_bytes(self, text): pass
     async def receive(self): return {'type': 'websocket.disconnect'}
 
+class ResizeThenDisconnectSocket(Socket):
+    """Sends one live "resize" message before disconnecting, to exercise the
+    kind == "resize" branch inside terminal_ws's own receive loop — Socket's
+    own immediate-disconnect means that branch never runs otherwise."""
+    def __init__(self, rows, cols):
+        super().__init__()
+        self._messages = [{'type': 'websocket.receive', 'text': json.dumps({'type': 'resize', 'rows': rows, 'cols': cols})}]
+    async def receive(self):
+        if self._messages:
+            return self._messages.pop(0)
+        return {'type': 'websocket.disconnect'}
+
 class ProviderTests(unittest.TestCase):
     # A temp data root so nothing here can reach the real data/ tree, and so
     # the workspace half of a process key is a known value.
@@ -30,9 +43,9 @@ class ProviderTests(unittest.TestCase):
         proc = MagicMock(); proc.poll.return_value = None
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': ticket}}), \
              patch.object(main.db, 'update_ticket') as update, \
-             patch.object(main, 'agent_executable', side_effect=lambda provider: provider), \
+             patch.object(main, '_resolve_agent', side_effect=lambda provider: (provider, False)), \
              patch.object(main.pty, 'openpty', return_value=(100, 101)), \
-             patch.object(main, '_set_winsize'), patch.object(main.os, 'close'), \
+             patch.object(main.agent_launch, 'set_winsize'), patch.object(main.os, 'close'), \
              patch.object(main.subprocess, 'Popen', return_value=proc) as launch:
             asyncio.run(main.terminal_ws(Socket(), 'TEST-1', provider))
             return launch.call_args.args[0], update.call_args_list
@@ -51,8 +64,8 @@ class ProviderTests(unittest.TestCase):
         self.launch({'codexSessionId': 'saved-id'}, 'codex')
         existing = main.running_processes[self.process_key('TEST-1', 'codex')]['proc']
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'codexSessionId': 'saved-id'}}}), \
-             patch.object(main, 'agent_executable', return_value='codex'), \
-             patch.object(main, '_set_winsize'), \
+             patch.object(main, '_resolve_agent', return_value=('codex', False)), \
+             patch.object(main.agent_launch, 'set_winsize'), \
              patch.object(main.subprocess, 'Popen') as launch:
             asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
             launch.assert_not_called()
@@ -64,18 +77,90 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(command, ['claude', '--resume', 'claude-id'])
         self.assertIn(self.process_key('TEST-1', 'claude'), main.running_processes)
 
-    def test_codex_desktop_fallback_without_path(self):
-        with patch.dict(main.os.environ, {}, clear=True), \
-             patch.object(main.shutil, 'which', return_value=None), \
-             patch.object(main.Path, 'is_file', return_value=True), \
-             patch.object(main.os, 'access', return_value=True):
-            self.assertEqual(main.agent_executable('codex'), '/Applications/ChatGPT.app/Contents/Resources/codex')
+    def test_bridged_spawn_never_falls_back_to_a_local_popen(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(42, proc)) as spawn, \
+             patch.object(main.subprocess, 'Popen') as popen:
+            asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
+        spawn.assert_called_once()
+        # No --no-daemon for a bridged (host-native) codex: that flag only
+        # works around the container build's missing `ps`, and newer codex
+        # releases installed on a real host don't even recognize it.
+        self.assertEqual(spawn.call_args.args[0], ['/host/codex'])
+        popen.assert_not_called()
+        entry = main.running_processes[self.process_key('TEST-1', 'codex')]
+        self.assertEqual(entry['master_fd'], 42)
+        self.assertIs(entry['proc'], proc)
 
-    def test_explicit_binary_override(self):
-        with patch.dict(main.os.environ, {'WMP_CODEX_BIN':'/custom/codex'}), \
-             patch.object(main.shutil, 'which', return_value='/custom/codex') as which:
-            self.assertEqual(main.agent_executable('codex'), '/custom/codex')
-            which.assert_called_once_with('/custom/codex')
+    def test_bridged_codex_resume_also_drops_no_daemon(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'codexSessionId': 'saved-id'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(42, proc)) as spawn, \
+             patch.object(main.subprocess, 'Popen') as popen:
+            asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
+        self.assertEqual(spawn.call_args.args[0], ['/host/codex', 'resume', 'saved-id'])
+        popen.assert_not_called()
+
+    def test_bridged_spawn_failing_mid_session_raises_rather_than_silently_going_local(self):
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(None, None)), \
+             patch.object(main.subprocess, 'Popen') as popen:
+            with self.assertRaises(RuntimeError):
+                asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
+        popen.assert_not_called()
+
+    def test_stopping_a_bridged_session_closes_its_control_connection(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        key = main.process_key_for('TEST-1', 'codex')
+        main.running_processes[key] = {'proc': proc, 'master_fd': 999}
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {}}}), \
+             patch.object(main.os, 'close'):
+            main._terminate_process(key, main.running_processes[key], 'stopped')
+        proc.close.assert_called_once()
+
+    def test_stopping_a_local_session_does_not_look_for_close(self):
+        # A plain subprocess.Popen has no .close() — MagicMock(spec=...) makes
+        # this fail loudly if _terminate_process ever assumed one existed.
+        import subprocess as subprocess_module
+        proc = MagicMock(spec=subprocess_module.Popen)
+        proc.poll.return_value = None
+        key = main.process_key_for('TEST-1', 'claude')
+        main.running_processes[key] = {'proc': proc, 'master_fd': 999}
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {}}}), \
+             patch.object(main.os, 'close'):
+            main._terminate_process(key, main.running_processes[key], 'stopped')  # must not raise
+        proc.terminate.assert_called_once()
+
+    def test_local_session_resize_goes_through_agent_launch_set_winsize(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('codex', False)), \
+             patch.object(main.pty, 'openpty', return_value=(100, 101)), \
+             patch.object(main.os, 'close'), \
+             patch.object(main.agent_launch, 'set_winsize') as set_winsize, \
+             patch.object(main.subprocess, 'Popen', return_value=proc):
+            asyncio.run(main.terminal_ws(ResizeThenDisconnectSocket(40, 120), 'TEST-1', 'codex'))
+        # Once for the initial open (30, 100), once for the live resize message.
+        set_winsize.assert_called_with(100, 40, 120)
+
+    def test_bridged_session_resize_goes_through_the_handles_resize_method(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(42, proc)), \
+             patch.object(main.subprocess, 'Popen') as popen:
+            asyncio.run(main.terminal_ws(ResizeThenDisconnectSocket(40, 120), 'TEST-1', 'codex'))
+        popen.assert_not_called()
+        proc.resize.assert_called_once_with(40, 120)
 
     def test_invalid_provider_does_not_spawn(self):
         with patch.object(main.subprocess, 'Popen') as launch:
