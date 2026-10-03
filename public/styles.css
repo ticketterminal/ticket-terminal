@@ -518,3 +518,28 @@
 .categorysuggestion{padding:14px 0;border-bottom:1px solid var(--line);}.categorysuggestion p{margin:5px 0;font-size:13px;}.suggestionchoice{display:flex;gap:10px;align-items:center;}.suggestionchoice input{width:17px;height:17px;accent-color:var(--accent);}
 .affectedtickets{font-size:12px;margin:8px 0;}.affectedtickets>div{padding:4px 0;}.categorydecision{text-transform:capitalize;color:var(--ink-muted);font-size:12px;}
 .categoryonboarding{width:min(580px,calc(100% - 32px));padding:28px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;}.categoryonboarding::backdrop{background:rgba(0,0,0,.55);}.categoryonboarding button{margin-right:10px;}
+
+/* Casey, Ticket Terminal's stationmaster (mascot.js) — a speech bubble next to
+   a fixed artwork sprite (public/assets/mascot-conductor.png), reused by the
+   categories onboarding dialog and the Help popup below. */
+.mascotwrap{display:flex;gap:14px;align-items:flex-start;margin-bottom:18px;}
+.mascotfigure{flex:none;}
+.mascotimg{display:block;width:92px;height:auto;}
+@media (prefers-reduced-motion:no-preference){
+  .mascotimg{animation:mascotbob 3.2s ease-in-out infinite;}
+}
+@keyframes mascotbob{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}
+.mascotbubble{position:relative;flex:1;min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+.mascotbubble::before{content:"";position:absolute;left:-7px;top:18px;width:12px;height:12px;background:var(--surface-2);border-left:1px solid var(--line);border-bottom:1px solid var(--line);transform:rotate(45deg);}
+.mascotbubble h2{font-family:"Cabin",sans-serif;font-size:19px;margin:0 0 6px;}
+.mascotbubble p{margin:0;}
+.mascotbubble p+p{margin-top:8px;}
+@media (max-width:480px){
+  .mascotwrap{flex-direction:column;align-items:center;text-align:center;}
+  .mascotbubble::before{display:none;}
+}
+
+.helpdialog{width:min(480px,calc(100% - 32px));padding:24px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;}
+.helpdialog::backdrop{background:rgba(0,0,0,.55);}
+.helpnav{display:flex;align-items:center;gap:10px;}
+.helpcount{flex:1;text-align:center;color:var(--ink-muted);font-size:12.5px;font-variant-numeric:tabular-nums;}
