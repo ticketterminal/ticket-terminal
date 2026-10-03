@@ -452,8 +452,8 @@
   </div>
   <div class="doccard">
     <div class="dochead">zsh</div>
-    <div class="docbody"><pre><span class="p">$</span> python3 -m venv .venv &amp;&amp; source .venv/bin/activate
-<span class="p">$</span> pip install -r requirements.txt
+    <div class="docbody"><pre><span class="p">$</span> uv venv &amp;&amp; uv pip install --require-hashes -r requirements.txt
+<span class="p">$</span> source .venv/bin/activate
 <span class="p">$</span> python server/main.py</pre></div>
   </div>
   <p class="qs-cap">→ open http://127.0.0.1:4173 — no build step, no separate frontend process.</p>
