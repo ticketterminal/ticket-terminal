@@ -86,11 +86,25 @@ class ProviderTests(unittest.TestCase):
              patch.object(main.subprocess, 'Popen') as popen:
             asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
         spawn.assert_called_once()
-        self.assertEqual(spawn.call_args.args[0], ['/host/codex', '--no-daemon'])
+        # No --no-daemon for a bridged (host-native) codex: that flag only
+        # works around the container build's missing `ps`, and newer codex
+        # releases installed on a real host don't even recognize it.
+        self.assertEqual(spawn.call_args.args[0], ['/host/codex'])
         popen.assert_not_called()
         entry = main.running_processes[self.process_key('TEST-1', 'codex')]
         self.assertEqual(entry['master_fd'], 42)
         self.assertIs(entry['proc'], proc)
+
+    def test_bridged_codex_resume_also_drops_no_daemon(self):
+        proc = MagicMock(); proc.poll.return_value = None
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'codexSessionId': 'saved-id'}}}), \
+             patch.object(main.db, 'update_ticket'), \
+             patch.object(main, '_resolve_agent', return_value=('/host/codex', True)), \
+             patch.object(main.host_bridge_client, 'spawn', return_value=(42, proc)) as spawn, \
+             patch.object(main.subprocess, 'Popen') as popen:
+            asyncio.run(main.terminal_ws(Socket(), 'TEST-1', 'codex'))
+        self.assertEqual(spawn.call_args.args[0], ['/host/codex', 'resume', 'saved-id'])
+        popen.assert_not_called()
 
     def test_bridged_spawn_failing_mid_session_raises_rather_than_silently_going_local(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'summary': 'Example'}}}), \
