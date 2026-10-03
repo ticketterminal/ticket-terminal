@@ -11,6 +11,7 @@ import { renderSettingsPage } from "./settings.js";
 import { renderInsightsPage } from "./insights.js";
 import { renderTerminalPage, disposeTerminalPage } from "./terminal-page.js";
 import { parseRoute, routeHash, applyRouteWorkspace } from "./workspaces.js";
+import { reloadBoard } from "./polling.js";
 
 const gridview = document.getElementById("gridview");
 const detailview = document.getElementById("detailview");
@@ -93,7 +94,11 @@ export function wireRouterUI(){
   document.getElementById("memoryBackBtn").addEventListener("click", () => { location.hash = routeHash(""); });
   document.getElementById("memoryGraphBtn").addEventListener("click", () => { location.hash = routeHash("#/memory"); });
   document.getElementById("settingsBtn").addEventListener("click", () => { location.hash = routeHash("#/settings"); });
-  document.getElementById("settingsBackBtn").addEventListener("click", () => { location.hash = routeHash(""); });
+  // Settings can trigger a real Jira/Notion sync ("Test connection", a tracker save) without
+  // ever touching the board itself — without this, the grid shows whatever was on screen
+  // before you left, stale until the next 60s poll (board.js). Leaving settings for the grid
+  // always re-fetches immediately instead of waiting on that.
+  document.getElementById("settingsBackBtn").addEventListener("click", () => { location.hash = routeHash(""); reloadBoard(); });
   document.getElementById("insightsBtn").addEventListener("click", () => { location.hash = routeHash("#/insights"); });
   document.getElementById("insightsBackBtn").addEventListener("click", () => { location.hash = routeHash(""); });
   document.getElementById("terminalPageBackBtn").addEventListener("click", () => { location.hash = routeHash(""); });
