@@ -1,6 +1,7 @@
 import {state} from './state.js';
 import {apiJson} from './api.js';
 import {el} from './dom-utils.js';
+import {mascotSay} from './mascot.js';
 import {buildCategoryUI} from './lanes.js';
 import {reloadBoard} from './polling.js';
 import {routeHash, parseRoute} from './workspaces.js';
@@ -204,8 +205,10 @@ export async function initCategoryManagement(){
     await refreshCategoryManagement();
     if(!current.onboarded && !current.existingSetup){
       const dialog=document.createElement('dialog');dialog.className='categoryonboarding';
-      dialog.appendChild(el('h2',null,'What kind of work do you do?'));
-      dialog.appendChild(el('p','sub','Start with categories for your role. You can rename, add, or change them at any time.'));
+      dialog.appendChild(mascotSay([
+        el('h2',null,'What kind of work do you do?'),
+        el('p','sub','Start with categories for your role. You can rename, add, or change them at any time.'),
+      ]));
       const role=document.createElement('select');role.setAttribute('aria-label','Work role');current.roles.forEach(name=>{const opt=document.createElement('option');opt.value=name;opt.textContent=name;role.appendChild(opt);});
       const preview=el('div','categorypreviews');const refresh=()=>previewNames(preview,current.presets[role.value]);role.addEventListener('change',refresh);role.value=current.roles[0];refresh();
       const status=el('p','settingsmsg');

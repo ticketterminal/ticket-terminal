@@ -525,6 +525,28 @@ class SyncTests(NotionFixture):
         self.assertFalse(res['ok'])
         self.assertEqual(len(self.patched), 2)
 
+    def test_assignee_push_is_jira_only_and_mirrors_locally(self):
+        self.connect()
+        db.write({'jiraTickets': {
+            'ENG-1': {'key': 'ENG-1', 'source': 'notion', 'notionPageId': 'p-1'},
+            'JIRA-1': {'key': 'JIRA-1'},
+        }, 'people': {}, 'teamOptions': []})
+        # Notion-sourced tickets are rejected outright — no Jira/Notion call at
+        # all, since Notion's own "assignee" role already lands in `reporter`.
+        res = main.patch_jira_assignee('ENG-1', {'accountId': 'acc-1', 'displayName': 'Dana'})
+        self.assertFalse(res['ok'])
+        with patch.object(main.jira_sync, 'configured', return_value=True), \
+             patch.object(main.jira_sync, 'set_assignee') as set_assignee:
+            res = main.patch_jira_assignee('JIRA-1', {'accountId': 'acc-2', 'displayName': 'Sam'})
+        self.assertTrue(res['ok'], res)
+        set_assignee.assert_called_once_with('JIRA-1', 'acc-2')
+        t = db.read()['jiraTickets']['JIRA-1']
+        self.assertEqual((t['assigneeAccountId'], t['assigneeName']), ('acc-2', 'Sam'))
+        # Unconfigured Jira -> its own error, no crash.
+        with patch.object(main.jira_sync, 'configured', return_value=False):
+            res = main.patch_jira_assignee('JIRA-1', {'accountId': 'acc-3', 'displayName': 'X'})
+        self.assertFalse(res['ok'])
+
     def test_sync_all_merges_trackers_and_isolates_failures(self):
         self.connect()
         with patch.object(main.jira_sync, 'configured', return_value=True), \

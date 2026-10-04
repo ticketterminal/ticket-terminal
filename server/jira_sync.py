@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import auto_categorize
 import content
 import content_tags
+import db
 import settings_store
 import workspaces
 
@@ -121,6 +122,7 @@ def invalidate_cache():
     a different workflow, so the cached status list (see
     get_workflow_statuses) can't be trusted across a config change."""
     _workflow_statuses_cache.pop(workspaces.current(), None)
+    _assignable_users_cache.pop(workspaces.current(), None)
 
 
 def _chunks(seq, size):
@@ -183,7 +185,7 @@ def discover_new_tickets(db) -> dict:
         f"{c['base_url']}/rest/api/3/search/jql",
         json={
             "jql": jql,
-            "fields": ["summary", "description", "status", "priority", "reporter", "created", "updated", "issuetype", "parent", "issuelinks"],
+            "fields": ["summary", "description", "status", "priority", "reporter", "assignee", "created", "updated", "issuetype", "parent", "issuelinks"],
             "maxResults": c["sync_limit"],
         },
         auth=(c["email"], c["api_token"]),
@@ -221,6 +223,8 @@ def discover_new_tickets(db) -> dict:
             "jiraStatus": (fields.get("status") or {}).get("name", ""),
             "jiraPriority": (fields.get("priority") or {}).get("name", ""),
             "reporter": (fields.get("reporter") or {}).get("displayName", ""),
+            "assigneeAccountId": (fields.get("assignee") or {}).get("accountId", ""),
+            "assigneeName": (fields.get("assignee") or {}).get("displayName", ""),
             "parentKey": (fields.get("parent") or {}).get("key") or "",
             "linkedIssues": _parse_issue_links(fields),
             "categories": guess,
@@ -263,7 +267,7 @@ def sync_all_tickets(db) -> dict:
             # Atlassian retired the old /rest/api/3/search (410 Gone, confirmed
             # live 2026-09-06) in favor of this one — same request/response shape.
             f"{c['base_url']}/rest/api/3/search/jql",
-            json={"jql": jql, "fields": ["summary", "description", "status", "priority", "parent", "issuelinks"], "maxResults": len(batch)},
+            json={"jql": jql, "fields": ["summary", "description", "status", "priority", "assignee", "parent", "issuelinks"], "maxResults": len(batch)},
             auth=(c["email"], c["api_token"]),
             timeout=15,
         )
@@ -273,6 +277,9 @@ def sync_all_tickets(db) -> dict:
             fields = issue.get("fields", {})
             status_name = (fields.get("status") or {}).get("name")
             priority_name = (fields.get("priority") or {}).get("name")
+            assignee_field = fields.get("assignee") or {}
+            assignee_account_id = assignee_field.get("accountId", "")
+            assignee_name = assignee_field.get("displayName", "")
             parent_key = (fields.get("parent") or {}).get("key") or ""
             linked_issues = _parse_issue_links(fields)
             ticket = data["jiraTickets"].get(key, {})
@@ -288,6 +295,9 @@ def sync_all_tickets(db) -> dict:
                 patch["jiraStatus"] = status_name
             if priority_name and priority_name != ticket.get("jiraPriority"):
                 patch["jiraPriority"] = priority_name
+            if assignee_account_id != (ticket.get("assigneeAccountId") or ""):
+                patch["assigneeAccountId"] = assignee_account_id
+                patch["assigneeName"] = assignee_name
             if parent_key != (ticket.get("parentKey") or ""):
                 patch["parentKey"] = parent_key
             if linked_issues != (ticket.get("linkedIssues") or []):
@@ -344,6 +354,82 @@ def set_priority(key: str, priority_name: str):
         timeout=15,
     )
     resp.raise_for_status()
+
+
+def set_assignee(key: str, account_id: str):
+    """Push an assignee change from the board back to the real Jira issue.
+    Same PUT /rest/api/3/issue/{key} shape set_priority already uses; an
+    empty account_id clears the assignee — Jira Cloud's documented way to
+    unassign an issue is a null assignee field, not a special sentinel id."""
+    if not configured():
+        raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
+    c = get_config()
+    resp = requests.put(
+        f"{c['base_url']}/rest/api/3/issue/{key}",
+        json={"fields": {"assignee": {"accountId": account_id} if account_id else None}},
+        auth=(c["email"], c["api_token"]),
+        timeout=15,
+    )
+    resp.raise_for_status()
+
+
+# Keyed by workspace slug, same reasoning as _workflow_statuses_cache: a
+# different workspace is a different Jira project with a different roster.
+_assignable_users_cache: dict[str, list[dict]] = {}
+
+
+def _known_team_names() -> set[str]:
+    """Real people who've actually shown up as a reporter or an assignee on
+    an already-synced ticket — used to narrow the raw Jira "assignable
+    users" list (below) down to this board's actual team. On a permissive
+    permission scheme (e.g. a Service Desk project where any licensed user
+    can be assigned) that raw list is effectively the whole company —
+    service accounts, automation bots, and everyone else included — not a
+    useful dropdown. Reporters/assignees are stored by displayName only (the
+    old `reporter` field never captured an accountId either), so the match
+    below is by exact name, not id."""
+    names = set()
+    for ticket in db.read()["jiraTickets"].values():
+        if ticket.get("reporter"):
+            names.add(ticket["reporter"])
+        if ticket.get("assigneeName"):
+            names.add(ticket["assigneeName"])
+    return names
+
+
+def get_assignable_users() -> list[dict]:
+    """Who Jira will actually let you set as one of this project's issues'
+    assignee, narrowed to names this board has actually seen (see
+    _known_team_names) — on a wide-open permission scheme the raw Jira list
+    is effectively every user in the company, not "the team". Falls back to
+    the unnarrowed list on a brand-new board with no synced history yet, so
+    the dropdown is never empty just because nothing narrowed it.
+
+    Cached per workspace like get_workflow_statuses: the roster doesn't
+    change within a session, and a newly added teammate just won't appear in
+    the dropdown until the next Settings-page save (which calls
+    invalidate_cache()) or server restart — same trade-off already accepted
+    for the status list."""
+    if not configured():
+        raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
+    slug = workspaces.current()
+    if slug not in _assignable_users_cache:
+        c = get_config()
+        resp = requests.get(
+            f"{c['base_url']}/rest/api/3/user/assignable/search",
+            params={"project": c["project"], "maxResults": 200},
+            auth=(c["email"], c["api_token"]),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        candidates = [
+            {"accountId": u["accountId"], "displayName": u.get("displayName", u["accountId"])}
+            for u in resp.json()
+        ]
+        known = _known_team_names()
+        narrowed = [u for u in candidates if u["displayName"] in known]
+        _assignable_users_cache[slug] = narrowed or candidates
+    return _assignable_users_cache[slug]
 
 
 def get_transitions(key: str) -> list[dict]:
