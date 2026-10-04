@@ -18,7 +18,7 @@ def db_path():
 
 
 def _empty():
-    return {"jiraTickets": {}, "people": {}, "teamOptions": []}
+    return {"jiraTickets": {}, "people": {}, "teamOptions": [], "hiddenAssignees": []}
 
 
 def read():
@@ -76,3 +76,11 @@ def set_team_options(options):
         db["teamOptions"] = options
         write(db)
         return options
+
+
+def set_hidden_assignees(account_ids):
+    with _lock:
+        db = read()
+        db["hiddenAssignees"] = account_ids
+        write(db)
+        return account_ids
