@@ -683,6 +683,52 @@ def patch_jira_priority(key: str, body: dict = Body(...)):
         return {"ok": False, "error": str(e)}
 
 
+@app.patch("/api/tickets/{key}/jira-assignee")
+def patch_jira_assignee(key: str, body: dict = Body(...)):
+    account_id = body.get("accountId", "")
+    display_name = body.get("displayName", "")
+    ticket = db.read()["jiraTickets"].get(key, {})
+    if ticket_source(ticket) == "notion":
+        return {"ok": False, "error": "assignee editing isn't available for Notion-sourced tickets yet"}
+    if not jira_sync.configured():
+        return {"ok": False, "error": "not configured — copy .env.example to .env and fill it in"}
+    try:
+        jira_sync.set_assignee(key, account_id)
+        db.update_ticket(key, {"assigneeAccountId": account_id, "assigneeName": display_name})
+        return {"ok": True, "assigneeAccountId": account_id, "assigneeName": display_name}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/jira-assignable-users")
+def get_jira_assignable_users():
+    """The one shared assignee-option list every Jira ticket's assignee
+    <select> renders from — see jira_sync.get_assignable_users for why this
+    is cached instead of a per-ticket GET. Every candidate carries a `hidden`
+    flag from the board's own curated allowlist (Settings -> "Jira assignees
+    shown") — still returned here rather than filtered out, so the Settings
+    page can show (and let you reverse) a hidden entry; it's the ticket
+    row's <select> that actually excludes hidden ones from its options."""
+    if not jira_sync.configured():
+        return {"ok": False, "error": "not configured — copy .env.example to .env and fill it in"}
+    try:
+        hidden = set(db.read().get("hiddenAssignees", []))
+        users = jira_sync.get_assignable_users()
+        return {"ok": True, "users": [dict(u, hidden=u["accountId"] in hidden) for u in users]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/hidden-assignees")
+def get_hidden_assignees():
+    return {"ids": db.read().get("hiddenAssignees", [])}
+
+
+@app.put("/api/hidden-assignees")
+def put_hidden_assignees(body: dict = Body(...)):
+    return {"ids": db.set_hidden_assignees(body.get("ids", []))}
+
+
 @app.get("/api/jira-statuses")
 def get_jira_statuses():
     """The one shared status list every ticket's status <select> renders from

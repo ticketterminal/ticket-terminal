@@ -17,6 +17,7 @@ const catMsgEl = document.getElementById("settingsCategoriesMsg");
 const addCategoryBtn = document.getElementById("settingsAddCategoryBtn");
 const saveCategoriesBtn = document.getElementById("settingsSaveCategoriesBtn");
 const jiraFormEl = document.getElementById("settingsJiraForm");
+const assigneesFormEl = document.getElementById("settingsAssigneesForm");
 const notionFormEl = document.getElementById("settingsNotionForm");
 const memoryFormEl = document.getElementById("settingsMemoryForm");
 
@@ -160,7 +161,7 @@ function buildSettingsRow(labelText, inputEl){
   return row;
 }
 
-async function renderJiraForm(){
+async function renderJiraForm(flash){
   jiraFormEl.innerHTML = "Loading…";
   const settings = await apiJson("/api/settings").catch(() => null);
   jiraFormEl.innerHTML = "";
@@ -209,6 +210,7 @@ async function renderJiraForm(){
   const testBtn = document.createElement("button");
   testBtn.type = "button"; testBtn.className = "copybtn"; testBtn.textContent = "Test connection";
   const msg = el("span","settingsmsg","");
+  if (flash) showMsg(msg, flash.text, flash.kind);
   actions.appendChild(saveBtn); actions.appendChild(testBtn); actions.appendChild(msg);
   jiraFormEl.appendChild(actions);
 
@@ -220,8 +222,11 @@ async function renderJiraForm(){
         jira: { baseUrl: baseUrlInput.value.trim(), email: emailInput.value.trim(), apiToken: tokenInput.value,
                 projectKey: projectInput.value.trim(), syncLimit: syncLimitInput.value.trim() }
       })});
-      showMsg(msg, "Saved ✓", "ok");
-      await renderJiraForm(); // re-fetch so the token preview reflects what's actually stored
+      // Pass the confirmation through to the re-rendered form instead of
+      // showing it on this `msg` node — renderJiraForm() below rebuilds the
+      // whole form (so the token preview reflects what's actually stored),
+      // which replaces this node before the message ever paints.
+      await renderJiraForm({text: "Saved ✓", kind: "ok"});
     } catch (e) {
       showMsg(msg, "Couldn't save: " + e.message, "err");
     } finally {
@@ -251,7 +256,73 @@ async function renderJiraForm(){
   });
 }
 
-async function renderMemoryForm(){
+// Jira's own "assignable users" for this project can be effectively the
+// whole company on a permissive permission scheme (service accounts and
+// automation bots included) — jira_sync.get_assignable_users() already
+// narrows that to names this board has actually seen as a reporter or
+// assignee, but this lets you curate it further: uncheck anyone you don't
+// want cluttering the assignee dropdown or the "Assignees shown" filter.
+// Hiding someone here never touches Jira itself — see PUT /api/hidden-assignees.
+async function renderAssigneesForm(flash){
+  if (!assigneesFormEl) return;
+  assigneesFormEl.innerHTML = "Loading…";
+  const res = await apiJson("/api/jira-assignable-users").catch(() => null);
+  assigneesFormEl.innerHTML = "";
+  if (!res || !res.ok){
+    assigneesFormEl.appendChild(el("div","empty-state", (res && res.error) || "Couldn't load the Jira assignee list — connect Jira above first."));
+    return;
+  }
+
+  assigneesFormEl.appendChild(el("p","sub","Jira says all of these can be assigned to this project. Uncheck anyone you don't want showing up in Ticket Terminal's assignee dropdown or filter — they stay fully assignable in Jira itself, just hidden here."));
+
+  const list = el("div","assigneechecklist");
+  const sorted = (res.users || []).slice().sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const checkboxes = {};
+  sorted.forEach(u => {
+    const row = document.createElement("label");
+    row.className = "assigneecheckrow";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !u.hidden;
+    checkboxes[u.accountId] = box;
+    row.appendChild(box);
+    row.appendChild(document.createTextNode(u.displayName));
+    list.appendChild(row);
+  });
+  assigneesFormEl.appendChild(list);
+  if (!sorted.length) assigneesFormEl.appendChild(el("div","empty-state","No assignable users found for this project yet."));
+
+  const actions = el("div","settingsactions");
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button"; saveBtn.className = "refreshbtn"; saveBtn.textContent = "Save";
+  const msg = el("span","settingsmsg","");
+  if (flash) showMsg(msg, flash.text, flash.kind);
+  actions.appendChild(saveBtn); actions.appendChild(msg);
+  assigneesFormEl.appendChild(actions);
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    showMsg(msg, "Saving…", "");
+    try {
+      const hiddenIds = Object.keys(checkboxes).filter(id => !checkboxes[id].checked);
+      await apiJson("/api/hidden-assignees", {method:"PUT", body: JSON.stringify({ids: hiddenIds})});
+      await renderAssigneesForm({text: "Saved ✓", kind: "ok"});
+      // Refresh the in-memory roster and re-render now — reloadBoard() (the
+      // periodic/manual board refresh) never refetches this list, so without
+      // this the dropdown/filter would stay on the pre-save hidden set until
+      // the next full page load.
+      const fresh = await apiJson("/api/jira-assignable-users");
+      if (fresh && fresh.ok) state.jiraAssignableUsers = fresh.users;
+      renderTickets(state.lastTicketDocs, state.lastDbRef);
+    } catch (e) {
+      showMsg(msg, "Couldn't save: " + e.message, "err");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+async function renderMemoryForm(flash){
   memoryFormEl.innerHTML = "Loading…";
   const settings = await apiJson("/api/settings").catch(() => null);
   memoryFormEl.innerHTML = "";
@@ -288,6 +359,7 @@ async function renderMemoryForm(){
   const saveBtn = document.createElement("button");
   saveBtn.type = "button"; saveBtn.className = "refreshbtn"; saveBtn.textContent = "Save memory source";
   const msg = el("span","settingsmsg","");
+  if (flash) showMsg(msg, flash.text, flash.kind);
   actions.appendChild(saveBtn); actions.appendChild(msg);
   memoryFormEl.appendChild(actions);
 
@@ -296,8 +368,7 @@ async function renderMemoryForm(){
     showMsg(msg, "Saving…", "");
     try {
       await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({ memoryDir: dirInput.value.trim() })});
-      showMsg(msg, "Saved ✓", "ok");
-      await renderMemoryForm();
+      await renderMemoryForm({text: "Saved ✓", kind: "ok"});
     } catch (e) {
       showMsg(msg, "Couldn't save: " + e.message, "err");
     } finally {
@@ -313,7 +384,7 @@ async function renderMemoryForm(){
 // GET /api/notion/oauth/start → Notion consent → /api/notion/oauth/callback →
 // back to #/settings). Then a database picker + which columns play
 // status/priority. See server/notion_sync.py.
-export async function renderNotionForm(){
+export async function renderNotionForm(flash){
   notionFormEl.innerHTML = "Loading…";
   const settings = await apiJson("/api/settings").catch(() => null);
   notionFormEl.innerHTML = "";
@@ -412,6 +483,7 @@ export async function renderNotionForm(){
   connectBtn.className = "refreshbtn"; connectBtn.textContent = n.connected && n.authMode === "oauth" ? "Reconnect with Notion" : "Connect with Notion";
   connectBtn.href = "/api/notion/oauth/start";
   const appMsg = el("span","settingsmsg","");
+  if (flash && flash.id === "appMsg") showMsg(appMsg, flash.text, flash.kind);
   oauthActions.appendChild(saveAppBtn); oauthActions.appendChild(connectBtn); oauthActions.appendChild(appMsg);
   oauthFold.appendChild(oauthActions);
 
@@ -422,8 +494,7 @@ export async function renderNotionForm(){
       await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({
         notion: { clientId: clientIdInput.value.trim(), clientSecret: clientSecretInput.value, redirectUri: redirectInput.value.trim() }
       })});
-      showMsg(appMsg, "Saved ✓ — now click Connect with Notion", "ok");
-      await renderNotionForm();
+      await renderNotionForm({id: "appMsg", text: "Saved ✓ — now click Connect with Notion", kind: "ok"});
     } catch (e) {
       showMsg(appMsg, "Couldn't save: " + e.message, "err");
     } finally {
@@ -465,6 +536,7 @@ export async function renderNotionForm(){
   const testBtn = document.createElement("button");
   testBtn.type = "button"; testBtn.className = "copybtn"; testBtn.textContent = "Sync now";
   const mapMsg = el("span","settingsmsg","");
+  if (flash && flash.id === "mapMsg") showMsg(mapMsg, flash.text, flash.kind);
   mapActions.appendChild(saveMapBtn); mapActions.appendChild(testBtn); mapActions.appendChild(mapMsg);
   notionFormEl.appendChild(mapActions);
 
@@ -666,8 +738,7 @@ export async function renderNotionForm(){
       await apiJson("/api/settings", {method:"PUT", body: JSON.stringify({
         notion: { databaseId: dbManual.value.trim(), roles }
       })});
-      showMsg(mapMsg, "Saved ✓", "ok");
-      await renderNotionForm();
+      await renderNotionForm({id: "mapMsg", text: "Saved ✓", kind: "ok"});
     } catch (e) {
       showMsg(mapMsg, "Couldn't save: " + e.message, "err");
       saveMapBtn.disabled = false;
@@ -710,6 +781,7 @@ export async function renderSettingsPage(){
   renderCategoriesEditor();
   renderWorkspacesForm();
   renderJiraForm();
+  renderAssigneesForm();
   renderNotionForm();
   renderMemoryForm();
 }
