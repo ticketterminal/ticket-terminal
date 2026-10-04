@@ -79,6 +79,12 @@
         <button type="button" class="filterreset" id="statusFilterReset">Show all</button>
         <button type="button" class="filterreset" id="statusFilterClear">Deselect all</button>
       </div>
+      <div class="assigneefilterwrap">
+        <span class="reflabel">Assignees shown</span>
+        <div class="assigneefilterrow" id="assigneeFilterRow"></div>
+        <button type="button" class="filterreset" id="assigneeFilterReset">Show all</button>
+        <button type="button" class="filterreset" id="assigneeFilterClear">Deselect all</button>
+      </div>
       <div class="categorytoolbar" id="categoryToolbar">
         <div class="viewtoggle categorytoggle">
           <button type="button" class="viewbtn" id="toggleCategoriesBtn">Collapse all</button>
@@ -163,6 +169,13 @@
       <summary class="sectionhead">Jira connection</summary>
       <div class="lane">
         <div class="lanebody settingsform" id="settingsJiraForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Jira assignees shown</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsAssigneesForm"></div>
       </div>
     </details>
 
