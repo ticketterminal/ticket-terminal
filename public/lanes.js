@@ -3,7 +3,7 @@
 import { state } from "./state.js";
 import { el, applyScrollCap } from "./dom-utils.js";
 import { renderTicketRow } from "./ticket-row.js";
-import { passesFilters, isDone, renderFilterOptions, renderSprintOptions, normalizeSprintFilter, renderSearch } from "./filters.js";
+import { passesFilters, isDone, renderFilterOptions, renderSprintOptions, normalizeSprintFilter, renderSearch, allStatusNames, statusColor } from "./filters.js";
 import { renderPeople } from "./people.js";
 import { routeHash } from "./workspaces.js";
 
@@ -490,6 +490,7 @@ export function renderTickets(allDocs, dbRef){
   renderFilterOptions();
   renderSprintOptions();
   renderFlatList();
+  renderStatusBoard();
   renderSearch();
   renderPeople();
 }
@@ -506,4 +507,65 @@ export function renderFlatList(){
   renderLaneItems(allTicketsListEl, buildLaneItems(forAll, cmp), state.lastDbRef, cmp, "No open tickets.");
   applyScrollCap(allTicketsListEl, 10);
   allTicketsCountEl.textContent = forAll.length + (forAll.length === 1 ? " ticket" : " tickets");
+}
+
+const statusBoardEl = document.getElementById("statusBoardView");
+const STATUS_BOARD_ORDER = [
+  "backlog", "open", "to do", "todo", "selected for development", "in progress",
+  "waiting approval", "waiting for approval", "awaiting approval", "done", "cancelled", "canceled",
+];
+
+function statusBoardRank(status){
+  const rank = STATUS_BOARD_ORDER.indexOf((status || "").trim().toLowerCase());
+  return rank < 0 ? STATUS_BOARD_ORDER.length : rank;
+}
+
+// Resetting from the view button is intentionally temporary: the next ticket
+// toggle opts back into automatic widening. Capture the click before the
+// ticket handler stops propagation for its surrounding collapsible lane.
+statusBoardEl.addEventListener("click", event => {
+  if (event.target.closest(".rowtri")) statusBoardEl.classList.remove("statusboard-reset-columns");
+}, true);
+
+export function resetStatusBoardColumns(){
+  statusBoardEl.classList.add("statusboard-reset-columns");
+  statusBoardEl.querySelectorAll(".statuscolumn-expanded").forEach(column => column.classList.remove("statuscolumn-expanded"));
+}
+
+// Jira-style workflow board: one horizontal column per tracker status. Unlike
+// the category and flat lists, this deliberately includes completed tickets so
+// the board can show the whole workflow through Done/Cancelled. The status
+// filter controls which columns remain visible; every other board filter still
+// applies to the tickets inside them.
+export function renderStatusBoard(){
+  statusBoardEl.innerHTML = "";
+  const docs = state.lastTicketDocs.filter(passesFilters);
+  // "Unknown" is useful as a filter choice, but an empty synthetic column
+  // should not take the first third of the viewport. Configured tracker
+  // statuses stay visible even when empty; Unknown appears only when needed.
+  const statuses = allStatusNames()
+    .filter(name => (!state.selectedStatuses || state.selectedStatuses.has(name)) && (name || docs.some(doc => !((doc.data() || {}).jiraStatus))))
+    .sort((a, b) => statusBoardRank(a) - statusBoardRank(b));
+
+  statuses.forEach(status => {
+    const column = document.createElement("section");
+    column.className = "statuscolumn";
+    column.dataset.status = status;
+    column.style.setProperty("--status-column-color", statusColor(status));
+
+    const header = el("div", "statuscolumnhead");
+    header.appendChild(el("h3", null, status || "Unknown"));
+    const forStatus = docs.filter(doc => ((doc.data() || {}).jiraStatus || "") === status);
+    header.appendChild(el("span", "lanecount", String(forStatus.length)));
+    column.appendChild(header);
+
+    const body = el("div", "statuscolumnbody");
+    renderLaneItems(body, buildLaneItems(forStatus, compareByPriority), state.lastDbRef, compareByPriority, "No tickets.");
+    column.appendChild(body);
+    statusBoardEl.appendChild(column);
+  });
+
+  if (!statuses.length){
+    statusBoardEl.appendChild(el("div", "statusboardempty", "No statuses selected."));
+  }
 }

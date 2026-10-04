@@ -18,7 +18,7 @@ Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:t
 globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true})});
 
 const {state}=await import(root+'/public/state.js');
-const {buildLaneItems,renderLaneItems}=await import(root+'/public/lanes.js');
+const {buildLaneItems,renderLaneItems,renderStatusBoard,resetStatusBoardColumns}=await import(root+'/public/lanes.js');
 const {renderSearch,searchForTicket}=await import(root+'/public/filters.js');
 const {renderTicketRow}=await import(root+'/public/ticket-row.js');
 
@@ -93,6 +93,43 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
   searchForTicket('OPS-99');
   assert.equal(searchInput.value,'OPS-99');
   searchInput.value='';
+}
+
+// --- Jira-style status board ------------------------------------------------------------
+{
+  state.jiraStatusOptions=[{id:'4',name:'Cancelled'},{id:'1',name:'Backlog'},{id:'2',name:'In Progress'},{id:'3',name:'Done'}];
+  state.notionStatusOptions=[];
+  state.selectedStatuses=new Set(['Backlog','In Progress','Done','Cancelled']);
+  state.selectedTeams=null;
+  state.selectedAssignees=null;
+  state.filterPerson='';
+  state.filterInProgress=false;
+  state.lastTicketDocs=[
+    doc('OPS-40',{jiraStatus:'Backlog',jiraPriority:'Low'}),
+    doc('OPS-41',{jiraStatus:'In Progress',jiraPriority:'High'}),
+    doc('OPS-42',{jiraStatus:'Done',jiraPriority:'Medium'}),
+    doc('OPS-43',{jiraStatus:'Cancelled',jiraPriority:'Medium'}),
+  ];
+  state.lastDbRef={};
+  renderStatusBoard();
+  const board=document.getElementById('statusBoardView');
+  assert.deepEqual([...board.querySelectorAll('.statuscolumnhead h3')].map(n=>n.textContent),['Backlog','In Progress','Done','Cancelled'],'standard Jira statuses follow workflow order, not the raw API order');
+  assert.equal(board.querySelector('[data-status="Done"] .tickettitletext').textContent,'OPS-42 — Summary of OPS-42','completed tickets remain visible in the Done column');
+  const backlogColumn=board.querySelector('[data-status="Backlog"]');
+  const backlogExpand=backlogColumn.querySelector('.rowtri');
+  backlogExpand.click();
+  assert(backlogColumn.classList.contains('statuscolumn-expanded'),'expanding a ticket doubles its status column');
+  backlogExpand.click();
+  assert(!backlogColumn.classList.contains('statuscolumn-expanded'),'collapsing the ticket restores the column');
+  backlogColumn.classList.add('statuscolumn-expanded');
+  resetStatusBoardColumns();
+  assert(!backlogColumn.classList.contains('statuscolumn-expanded'),'the status-board control can restore every column at once');
+  assert(board.classList.contains('statusboard-reset-columns'),'the reset also overrides tickets that remain expanded');
+  backlogExpand.click();
+  assert(!board.classList.contains('statusboard-reset-columns'),'the next ticket toggle restores automatic column sizing');
+  state.selectedStatuses.delete('Backlog');
+  renderStatusBoard();
+  assert.equal(board.querySelector('[data-status="Backlog"]'),null,'the status filter hides its whole board column');
 }
 
 // --- a ticket row's "Linked tickets" section --------------------------------------------
