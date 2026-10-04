@@ -35,6 +35,15 @@ export const state = {
   // configured, or the fetch failed. A ticket row falls back to a read-only badge.
   jiraStatusOptions: [],
 
+  // Same pattern, from GET /api/jira-assignable-users — the real Jira
+  // project's assignable-user roster ({accountId, displayName, hidden}),
+  // used to populate each Jira-sourced ticket row's assignee <select> (only
+  // the non-hidden ones) and the "Assignees shown" filter chips. `hidden`
+  // reflects the board's own curated allowlist (Settings -> "Jira assignees
+  // shown"), not anything Jira itself knows about. Notion tickets don't get
+  // an assignee <select> — see ticket-row.js.
+  jiraAssignableUsers: [],
+
   // Same, for tickets whose `source` is "notion" — from GET /api/notion/options,
   // i.e. the mapped status/priority columns' option lists of the configured
   // database. Priorities is a plain array of names (Notion has no fixed scheme
@@ -106,6 +115,9 @@ export const state = {
   // Multi-select status filter — same pattern, see filters.js's syncSelectedStatuses.
   selectedStatuses: null,
   knownStatusNames: new Set(),
+  // Multi-select assignee filter — same pattern, see filters.js's syncSelectedAssignees.
+  selectedAssignees: null,
+  knownAssigneeNames: new Set(),
   filterPerson: "",
   filterInProgress: false,
 

@@ -131,6 +131,8 @@
   .teamfilterrow{display:flex;flex-wrap:wrap;gap:6px;}
   .statusfilterwrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
   .statusfilterrow{display:flex;flex-wrap:wrap;gap:6px;}
+  .assigneefilterwrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .assigneefilterrow{display:flex;flex-wrap:wrap;gap:6px;}
   .filterchip{
     font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;padding:4px 11px;
     border-radius:100px;border:1.5px solid var(--line);background:transparent;cursor:pointer;
@@ -257,6 +259,8 @@
   .detailboxnote{font-family:"Public Sans",sans-serif;font-size:10.5px;color:var(--ink-muted);margin-top:4px;font-style:italic;}
   select.prioritysel{cursor:pointer;}
   select.prioritysel:disabled{opacity:.6;cursor:default;}
+  select.assigneesel{cursor:pointer;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);}
+  select.assigneesel:disabled{opacity:.6;cursor:default;}
   .statusprogress{
     --status-color:var(--ink-muted);
     display:inline-flex;align-items:stretch;width:max-content;max-width:100%;height:24px;overflow:hidden;
@@ -471,6 +475,9 @@
   .settingshint{font-size:12.5px;color:var(--ink-muted);line-height:1.5;}
   .settingsexplain{font-size:12.5px;color:var(--ink-muted);line-height:1.6;background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;}
   .settingsexplain code{font-family:"IBM Plex Mono",monospace;font-size:11.5px;background:var(--surface);padding:1px 4px;border-radius:3px;}
+  .assigneechecklist{display:flex;flex-wrap:wrap;gap:4px 16px;max-height:260px;overflow-y:auto;padding:4px 0;}
+  .assigneecheckrow{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;width:200px;}
+  .assigneecheckrow input{cursor:pointer;}
   .workspaceform{display:flex;flex-direction:column;gap:12px;}
   .settingsactions{display:flex;align-items:center;gap:10px;margin-top:10px;}
   .settingsmsg{font-size:12.5px;color:var(--ink-muted);}

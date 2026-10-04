@@ -23,6 +23,9 @@ const teamFilterClearBtn = document.getElementById("teamFilterClear");
 const statusFilterRowEl = document.getElementById("statusFilterRow");
 const statusFilterResetBtn = document.getElementById("statusFilterReset");
 const statusFilterClearBtn = document.getElementById("statusFilterClear");
+const assigneeFilterRowEl = document.getElementById("assigneeFilterRow");
+const assigneeFilterResetBtn = document.getElementById("assigneeFilterReset");
+const assigneeFilterClearBtn = document.getElementById("assigneeFilterClear");
 
 // Jira's fixed pair, or — for a Notion-sourced ticket — whatever its status
 // column's "Complete" group holds (Done, Archived, Duplicate…), fetched with
@@ -141,6 +144,57 @@ function renderStatusFilterChips(){
   });
 }
 
+// The board's curated Jira roster (Settings -> "Jira assignees shown", minus
+// anything hidden there) plus — same defensive reasoning as allStatusNames —
+// any assignee actually found on a loaded ticket but not in that roster
+// (hidden since, or a Notion ticket's blank assignee), so a real ticket's
+// assignee is never impossible to filter by. "" is always included, for
+// unassigned tickets and for every Notion ticket (which has no assignee
+// concept at all — see jira_sync.py).
+function allAssigneeNames(){
+  const names = new Set([""]);
+  state.jiraAssignableUsers.forEach(u => { if (!u.hidden) names.add(u.displayName); });
+  state.lastTicketDocs.forEach(d => { const a = (d.data()||{}).assigneeName; if (a) names.add(a); });
+  return Array.from(names);
+}
+
+// Same null-until-initialized / grow-only-on-new-names pattern as
+// syncSelectedTeams/syncSelectedStatuses.
+function syncSelectedAssignees(){
+  const all = allAssigneeNames();
+  if (state.selectedAssignees === null){
+    state.selectedAssignees = new Set(all);
+    state.knownAssigneeNames = new Set(all);
+    return;
+  }
+  all.forEach(a => {
+    if (!state.knownAssigneeNames.has(a)){
+      state.selectedAssignees.add(a);
+      state.knownAssigneeNames.add(a);
+    }
+  });
+}
+
+function renderAssigneeFilterChips(){
+  assigneeFilterRowEl.innerHTML = "";
+  allAssigneeNames().forEach(name => {
+    const active = state.selectedAssignees.has(name);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filterchip" + (active ? " active" : "");
+    chip.textContent = name === "" ? "Unassigned" : name;
+    const c = statusColor(name); // generic name-hash color, nothing status-specific about it
+    if (active){ chip.style.background = c; chip.style.color = "#fff"; chip.style.borderColor = c; }
+    else { chip.style.background = "transparent"; chip.style.color = c; chip.style.borderColor = c; }
+    chip.addEventListener("click", () => {
+      if (state.selectedAssignees.has(name)) state.selectedAssignees.delete(name); else state.selectedAssignees.add(name);
+      renderAssigneeFilterChips();
+      renderTickets(state.lastTicketDocs, state.lastDbRef);
+    });
+    assigneeFilterRowEl.appendChild(chip);
+  });
+}
+
 // Every sprint the tracker currently considers running. `state` is the
 // tracker-independent contract ("active"/"future"/"closed"); for Notion the
 // server derives it from the sprint rows' dates and active marker.
@@ -202,6 +256,7 @@ export function passesFilters(doc){
   if (state.filterPerson) return data.reporter === state.filterPerson;
   if (state.selectedTeams && !state.selectedTeams.has(teamForReporter(data.reporter))) return false;
   if (state.selectedStatuses && !state.selectedStatuses.has(data.jiraStatus || "")) return false;
+  if (state.selectedAssignees && !state.selectedAssignees.has(data.assigneeName || "")) return false;
   return true;
 }
 
@@ -259,6 +314,8 @@ export function renderFilterOptions(){
   renderTeamFilterChips();
   syncSelectedStatuses();
   renderStatusFilterChips();
+  syncSelectedAssignees();
+  renderAssigneeFilterChips();
 
   const prevPerson = filterPersonSel.value;
   const names = new Set();
@@ -386,6 +443,16 @@ export function wireFiltersUI(){
   statusFilterClearBtn.addEventListener("click", () => {
     state.selectedStatuses = new Set();
     renderStatusFilterChips();
+    renderTickets(state.lastTicketDocs, state.lastDbRef);
+  });
+  assigneeFilterResetBtn.addEventListener("click", () => {
+    state.selectedAssignees = new Set(allAssigneeNames());
+    renderAssigneeFilterChips();
+    renderTickets(state.lastTicketDocs, state.lastDbRef);
+  });
+  assigneeFilterClearBtn.addEventListener("click", () => {
+    state.selectedAssignees = new Set();
+    renderAssigneeFilterChips();
     renderTickets(state.lastTicketDocs, state.lastDbRef);
   });
   filterPersonSel.addEventListener("change", () => { state.filterPerson = filterPersonSel.value; renderTickets(state.lastTicketDocs, state.lastDbRef); });
