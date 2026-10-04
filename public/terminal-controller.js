@@ -188,6 +188,16 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     expandBtn.textContent = expanded ? "▾" : "▸";
     expandBtn.setAttribute("aria-expanded", String(expanded));
     expandBtn.setAttribute("aria-label", expanded ? "Collapse ticket details" : "Expand ticket details");
+    // On the Jira-style board, give the terminal-bearing column two grid
+    // tracks while any ticket inside it is open. The ordinary click cannot be
+    // delegated because this handler deliberately stops it from bubbling
+    // through collapsible category lanes.
+    const statusColumn = expandBtn.closest(".statuscolumn");
+    if (statusColumn){
+      statusColumn.closest(".statusboard")?.classList.remove("statusboard-reset-columns");
+      const hasExpandedTicket = !!statusColumn.querySelector('.rowtri[aria-expanded="true"]');
+      statusColumn.classList.toggle("statuscolumn-expanded", hasExpandedTicket);
+    }
   });
 }
 

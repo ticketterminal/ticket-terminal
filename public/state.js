@@ -100,9 +100,9 @@ export const state = {
   // actually exited, so they keep running and reconnect when you come back.
   openTerminals: new Set(),
 
-  // "All tickets" flat view + per-lane sort mode are per-viewer display
+  // Grouped, flat "All tickets", and Jira-style status-board views + per-lane sort mode are per-viewer display
   // preferences (localStorage), not shared server state.
-  viewMode: localStorage.getItem("wmp.viewMode") === "flat" ? "flat" : "grouped",
+  viewMode: ["grouped", "flat", "status"].includes(localStorage.getItem("wmp.viewMode")) ? localStorage.getItem("wmp.viewMode") : "grouped",
   flatSortMode: ["status", "priority", "date"].includes(localStorage.getItem("wmp.flatSort")) ? localStorage.getItem("wmp.flatSort") : "date",
   // Whether a subtask nests inside its parent's box (lanes.js's buildLaneItems) or every
   // ticket renders as a flat sibling, same as before that grouping existed.
