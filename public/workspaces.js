@@ -186,6 +186,10 @@ export async function loadWorkspaceBoard(afterCategories){
     state.jiraStatusOptions = res && res.ok ? res.statuses : [];
   } catch (error) { state.jiraStatusOptions = []; }
   try {
+    const res = await apiJson("/api/jira-assignable-users");
+    state.jiraAssignableUsers = res && res.ok ? res.users : [];
+  } catch (error) { state.jiraAssignableUsers = []; }
+  try {
     const res = await apiJson("/api/notion/options");
     if (res && res.ok){
       state.notionStatusOptions = res.statuses || [];

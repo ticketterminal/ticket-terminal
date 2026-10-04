@@ -39,6 +39,7 @@
       <button type="button" class="refreshbtn" id="memoryGraphBtn" style="margin-left:auto;" title="The shared knowledge base — markdown notes any agent session can read and write">🕸 Memory graph</button>
       <button type="button" class="refreshbtn" id="insightsBtn" title="Cost, model, and caching breakdown across every Claude/Codex session">📊 Insights</button>
       <button type="button" class="refreshbtn" id="settingsBtn">⚙ Settings</button>
+      <button type="button" class="refreshbtn" id="helpBtn" title="A few pointers from Casey, the stationmaster">❓ Help</button>
     </div>
 
     <details class="sectiondetails" id="ticketsSection" open>
@@ -77,6 +78,12 @@
         <div class="statusfilterrow" id="statusFilterRow"></div>
         <button type="button" class="filterreset" id="statusFilterReset">Show all</button>
         <button type="button" class="filterreset" id="statusFilterClear">Deselect all</button>
+      </div>
+      <div class="assigneefilterwrap">
+        <span class="reflabel">Assignees shown</span>
+        <div class="assigneefilterrow" id="assigneeFilterRow"></div>
+        <button type="button" class="filterreset" id="assigneeFilterReset">Show all</button>
+        <button type="button" class="filterreset" id="assigneeFilterClear">Deselect all</button>
       </div>
       <div class="categorytoolbar" id="categoryToolbar">
         <div class="viewtoggle categorytoggle">
@@ -162,6 +169,13 @@
       <summary class="sectionhead">Jira connection</summary>
       <div class="lane">
         <div class="lanebody settingsform" id="settingsJiraForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Jira assignees shown</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsAssigneesForm"></div>
       </div>
     </details>
 

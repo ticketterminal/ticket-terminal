@@ -287,6 +287,62 @@ function buildBadgeRow(data, doc, dbRef, row){
     badges.appendChild(prioSel);
   }
 
+  // Editable — who this ticket is assigned to, pulled once at startup from
+  // the real Jira board's assignable-users list (GET /api/jira-assignable-users,
+  // same fetch-once-cache pattern as jiraStatusOptions) and pushed straight
+  // back via PATCH /api/tickets/{key}/jira-assignee. Notion-sourced tickets,
+  // demo tickets, and boards where the list never loaded (not configured, or
+  // the fetch failed) fall back to a read-only badge — same escape hatch the
+  // priority/status selects use above.
+  if (data.source !== "notion" && !data.isDemo && state.jiraAssignableUsers.length){
+    const assigneeSel = document.createElement("select");
+    assigneeSel.className = "badge assigneesel";
+    const unassignedOpt = document.createElement("option");
+    unassignedOpt.value = "";
+    unassignedOpt.textContent = "Unassigned";
+    assigneeSel.appendChild(unassignedOpt);
+    const visibleUsers = state.jiraAssignableUsers.filter(u => !u.hidden);
+    const knownIds = visibleUsers.map(u => u.accountId);
+    if (data.assigneeAccountId && !knownIds.includes(data.assigneeAccountId)){
+      // Currently assigned to someone hidden from Settings, or no longer in
+      // the assignable list at all (left the project, permissions changed) —
+      // keep them selectable rather than silently showing "Unassigned" for a
+      // ticket that isn't.
+      const opt = document.createElement("option");
+      opt.value = data.assigneeAccountId;
+      opt.textContent = data.assigneeName || data.assigneeAccountId;
+      assigneeSel.appendChild(opt);
+    }
+    visibleUsers.forEach(u => {
+      const opt = document.createElement("option");
+      opt.value = u.accountId;
+      opt.textContent = u.displayName;
+      assigneeSel.appendChild(opt);
+    });
+    assigneeSel.value = data.assigneeAccountId || "";
+    assigneeSel.title = "Assignee — changes push straight to " + tracker;
+    assigneeSel.addEventListener("change", async () => {
+      const newVal = assigneeSel.value;
+      const newName = newVal ? assigneeSel.options[assigneeSel.selectedIndex].textContent : "";
+      const prevVal = data.assigneeAccountId || "";
+      assigneeSel.disabled = true;
+      try {
+        const res = await apiJson("/api/tickets/" + encodeURIComponent(doc.id) + "/jira-assignee", {method:"PATCH", body: JSON.stringify({accountId: newVal, displayName: newName})});
+        if (!res.ok) throw new Error(res.error || "failed");
+        await reloadBoard();
+      } catch (e) {
+        state.dom.dbStateEl.textContent = "Couldn't reassign " + doc.id + " in " + tracker + ": " + e.message;
+        assigneeSel.value = prevVal;
+        assigneeSel.disabled = false;
+      }
+    });
+    badges.appendChild(assigneeSel);
+  } else if (data.assigneeName){
+    const assigneeBadge = el("span","badge ro assigneebadge","👤 " + data.assigneeName);
+    assigneeBadge.title = data.source === "notion" ? "Assignee — not editable for Notion-sourced tickets" : "Assignee";
+    badges.appendChild(assigneeBadge);
+  }
+
   // Read-only — codeburn attributes cost per session id, not per ticket, so
   // there's nothing to push a change back to. Absent whenever this ticket
   // never opened a real Claude session yet, or codeburn has no data for it

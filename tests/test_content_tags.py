@@ -210,6 +210,20 @@ class JiraContentTagSyncTests(unittest.TestCase):
         self.sync(issue(), {})  # no "issuelinks" field on this issue
         self.assertEqual(self.db.data["jiraTickets"]["OPS-1"]["linkedIssues"], [])
 
+    def test_refresh_detects_an_assignee_change(self):
+        reassigned = issue()
+        reassigned["fields"]["assignee"] = {"accountId": "acc-9", "displayName": "Robin"}
+        self.sync(reassigned, {})
+        ticket = self.db.data["jiraTickets"]["OPS-1"]
+        self.assertEqual((ticket["assigneeAccountId"], ticket["assigneeName"]), ("acc-9", "Robin"))
+
+    def test_refresh_clears_assignee_once_unassigned_in_jira(self):
+        self.db.data["jiraTickets"]["OPS-1"]["assigneeAccountId"] = "acc-9"
+        self.db.data["jiraTickets"]["OPS-1"]["assigneeName"] = "Robin"
+        self.sync(issue(), {})  # no "assignee" field on this issue -> unassigned
+        ticket = self.db.data["jiraTickets"]["OPS-1"]
+        self.assertEqual((ticket["assigneeAccountId"], ticket["assigneeName"]), ("", ""))
+
 
 class JiraDiscoverParentKeyTests(unittest.TestCase):
     def setUp(self):
@@ -248,6 +262,21 @@ class JiraDiscoverParentKeyTests(unittest.TestCase):
         self.assertEqual(self.db.data["jiraTickets"]["OPS-4"]["linkedIssues"], [
             {"key": "OPS-1", "label": "is blocked by", "summary": "Old title"},
         ])
+
+    def test_a_newly_discovered_issue_gets_its_assignee(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-5"
+        new_issue["fields"]["assignee"] = {"accountId": "acc-1", "displayName": "Dana"}
+        self.discover(new_issue)
+        ticket = self.db.data["jiraTickets"]["OPS-5"]
+        self.assertEqual((ticket["assigneeAccountId"], ticket["assigneeName"]), ("acc-1", "Dana"))
+
+    def test_an_unassigned_newly_discovered_issue_gets_empty_assignee_fields(self):
+        new_issue = issue()
+        new_issue["key"] = "OPS-6"
+        self.discover(new_issue)
+        ticket = self.db.data["jiraTickets"]["OPS-6"]
+        self.assertEqual((ticket["assigneeAccountId"], ticket["assigneeName"]), ("", ""))
 
 
 class JiraDiscoverBrandNewWorkspaceTests(unittest.TestCase):
