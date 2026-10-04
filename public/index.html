@@ -44,7 +44,7 @@
 
     <details class="sectiondetails" id="ticketsSection" open>
       <summary class="sectionhead">
-        <span>Tickets — by meta-category</span>
+        <span>Tickets</span>
         <span class="sectionhelp" tabindex="0" aria-label="About tracker scan" aria-describedby="jiraScanTooltip">i
           <span class="sectionhelptext" id="jiraScanTooltip" role="tooltip">
             <strong>Tracker scan</strong>
@@ -64,6 +64,7 @@
         <div class="viewtoggle">
           <button type="button" class="viewbtn" id="viewGroupedBtn">Grouped</button>
           <button type="button" class="viewbtn" id="viewFlatBtn">All tickets</button>
+          <button type="button" class="viewbtn" id="viewStatusBtn" title="Show a Jira-style board with one column per status">Status board</button>
         </div>
         <span class="searchhint" id="searchHint"></span>
       </div>
@@ -106,6 +107,7 @@
         </div>
         <div class="lanebody" id="allTicketsList"></div>
       </div>
+      <div class="statusboard" id="statusBoardView" hidden aria-label="Tickets by status"></div>
       <div class="lane" id="searchResults" hidden>
         <div class="lanehead" style="cursor:default;">
           <h3>Search results</h3>

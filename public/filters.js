@@ -1,14 +1,16 @@
-// Team/person/in-progress filters, the grouped-vs-flat view toggle, and search.
+// Team/person/in-progress filters, the board-view toggle, and search.
 import { state } from "./state.js";
 import { el, applyScrollCap } from "./dom-utils.js";
 import { teamColor, teamForReporter } from "./people.js";
-import { compareByPriority, renderFlatList, laneTicketLists, lanesEl, renderTickets, buildLaneItems, renderLaneItems } from "./lanes.js";
+import { compareByPriority, renderFlatList, laneTicketLists, lanesEl, renderTickets, buildLaneItems, renderLaneItems, resetStatusBoardColumns } from "./lanes.js";
 
 const allTicketsEl = document.getElementById("allTicketsView");
 const allTicketsListEl = document.getElementById("allTicketsList");
 const flatSortSelEl = document.getElementById("flatSortSel");
 const viewGroupedBtn = document.getElementById("viewGroupedBtn");
 const viewFlatBtn = document.getElementById("viewFlatBtn");
+const viewStatusBtn = document.getElementById("viewStatusBtn");
+const statusBoardEl = document.getElementById("statusBoardView");
 const inProgressBtn = document.getElementById("inProgressBtn");
 const nestingToggleBtn = document.getElementById("nestingToggleBtn");
 const searchResultsEl = document.getElementById("searchResults");
@@ -87,7 +89,7 @@ function renderTeamFilterChips(){
 // gets silently hidden from the filter. "" ("Unknown") is always included,
 // same as the team filter, so a status-less ticket is never dropped before
 // the user gets a chance to control it.
-function allStatusNames(){
+export function allStatusNames(){
   // jiraStatusOptions/notionStatusOptions are both [{id, name}, ...] — see
   // statusOptionsFor in ticket-row.js, which reads the same two lists the
   // same way.
@@ -117,7 +119,7 @@ function syncSelectedStatuses(){
 
 // Deterministic per-status color, same hash-to-hue approach as teamColor but
 // with no fixed roster to special-case — statuses vary by tracker.
-function statusColor(name){
+export function statusColor(name){
   if (!name) return "var(--ink-muted)";
   let h = 0;
   for (let i=0;i<name.length;i++){ h = (h*31 + name.charCodeAt(i)) % 360; }
@@ -389,7 +391,7 @@ export function searchForTicket(key){
   searchInputEl.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
-// Which of lanes / all-tickets / search-results is visible right now — a
+// Which of grouped lanes / all-tickets / status-board / search-results is visible right now — a
 // search query always wins; otherwise it's whichever viewMode is set.
 export function updateViewVisibility(){
   const searching = !!(searchInputEl.value || "").trim();
@@ -397,8 +399,10 @@ export function updateViewVisibility(){
   lanesEl.hidden = searching || state.viewMode !== "grouped";
   document.getElementById("categoryToolbar").hidden = lanesEl.hidden;
   allTicketsEl.hidden = searching || state.viewMode !== "flat";
+  statusBoardEl.hidden = searching || state.viewMode !== "status";
   viewGroupedBtn.classList.toggle("active", state.viewMode === "grouped");
   viewFlatBtn.classList.toggle("active", state.viewMode === "flat");
+  viewStatusBtn.classList.toggle("active", state.viewMode === "status");
   // applyScrollCap measures real offsetTop/offsetHeight, which read as 0 on a
   // display:none container — so a lane/list measured while its view was
   // hidden (e.g. the periodic background refresh runs renderTickets() for
@@ -475,6 +479,10 @@ export function wireFiltersUI(){
 
   viewGroupedBtn.addEventListener("click", () => setViewMode("grouped"));
   viewFlatBtn.addEventListener("click", () => setViewMode("flat"));
+  viewStatusBtn.addEventListener("click", () => {
+    resetStatusBoardColumns();
+    setViewMode("status");
+  });
   inProgressBtn.addEventListener("click", () => {
     state.filterInProgress = !state.filterInProgress;
     inProgressBtn.classList.toggle("active");
