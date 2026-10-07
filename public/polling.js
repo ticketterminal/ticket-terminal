@@ -42,7 +42,12 @@ export async function reloadBoard(){
     ]);
     if (costsRes && costsRes.ok) state.sessionCosts = costsRes.costs || {};
     if (memUsageRes && memUsageRes.ok) state.memoryUsage = memUsageRes.usage || {};
-    if (processRes && processRes.ok) state.runningProcesses = new Set(processRes.running || []);
+    if (processRes && processRes.ok){
+      state.runningProcesses = new Set(processRes.running || []);
+      state.workingProcesses = new Set(processRes.working || []);
+      if (state.runningProcesses.size) startAgentActivityPoll();
+      else if (!state.liveTerminalCount) stopAgentActivityPoll();
+    }
     if (generation !== state.boardGeneration) return; // switched workspace while these were in flight
     state.teamOptions = Array.isArray(teamOpts) && teamOpts.length ? teamOpts : DEFAULT_TEAM_OPTIONS.slice();
     state.peopleMap = peopleObj || {};
@@ -72,6 +77,42 @@ export async function reloadBoard(){
 // state.costBadgeEls/memoryBadgeEls; never touches anything reloadBoard()
 // would (no re-render, so terminals are untouched).
 let liveStatsPollTimer = null;
+let agentActivityPollTimer = null;
+
+function patchAgentActivityDots(){
+  state.agentActivityEls.forEach(({ticketKey, dot}) => {
+    dot.hidden = !state.workingProcesses.has(ticketKey) && !state.workingProcesses.has("codex:" + ticketKey);
+  });
+}
+
+// The process endpoint is an in-memory lookup, unlike the heavier cost poll
+// above. Poll it quickly enough for the dot to follow actual PTY activity and
+// patch the already-mounted rows without disturbing an open xterm instance.
+export async function pollAgentActivity(){
+  const generation = state.boardGeneration;
+  try {
+    const response = await apiJson("/api/running-processes");
+    if (generation !== state.boardGeneration || !response || !response.ok) return;
+    state.runningProcesses = new Set(response.running || []);
+    state.workingProcesses = new Set(response.working || []);
+    patchAgentActivityDots();
+    if (!state.runningProcesses.size && !state.liveTerminalCount) stopAgentActivityPoll();
+  } catch (e) { /* next tick retries */ }
+}
+
+export function startAgentActivityPoll(){
+  if (agentActivityPollTimer) return;
+  pollAgentActivity();
+  agentActivityPollTimer = setInterval(pollAgentActivity, 1000);
+}
+
+export function stopAgentActivityPoll(){
+  if (!agentActivityPollTimer) return;
+  clearInterval(agentActivityPollTimer);
+  agentActivityPollTimer = null;
+  state.workingProcesses = new Set();
+  patchAgentActivityDots();
+}
 
 export async function pollLiveTicketStats(){
   const generation = state.boardGeneration;

@@ -13,7 +13,7 @@ import { reloadBoard } from "./polling.js";
 import { JIRA_PRIORITY_ORDER, JIRA_PRIORITY_COLOR } from "./lanes.js";
 import { teamColor, teamForReporter } from "./people.js";
 import { costBadgeText, costBadgeTitle, renderCostDetail, renderMemoryDetail } from "./badges.js";
-import { buildRunningProcessBadge, attachTerminal } from "./terminal-controller.js";
+import { attachTerminal } from "./terminal-controller.js";
 import { routeHash } from "./workspaces.js";
 import { searchForTicket } from "./filters.js";
 
@@ -49,6 +49,13 @@ function buildTopRow(data){
   expandBtn.textContent = "▸";
   titleGroup.appendChild(expandBtn);
 
+  const activityDot = document.createElement("span");
+  activityDot.className = "agentactivitydot";
+  activityDot.hidden = !state.workingProcesses.has(data.key) && !state.workingProcesses.has("codex:" + data.key);
+  activityDot.title = "Claude or Codex is actively working";
+  activityDot.setAttribute("aria-label", "Agent actively working");
+  state.agentActivityEls.push({ticketKey: data.key, dot: activityDot});
+
   const titleText = document.createElement("button");
   titleText.type = "button";
   titleText.className = "tickettitletext";
@@ -78,11 +85,11 @@ function buildTopRow(data){
     tools.appendChild(el("span","opendate", "opened " + formatOpenDate(data.createdAt)));
   }
   top.appendChild(tools);
-  return { top, expandBtn };
+  return { top, expandBtn, activityDot };
 }
 
-// Badges: issue-type/new flags, the running-process badge, editable
-// status/priority selects (pushing straight to Jira), the cost/memory badges
+// Badges: issue-type/new flags, editable status/priority selects (pushing
+// straight to Jira), the cost/memory badges
 // (+ their click-to-expand detail boxes), the team/reporter tags, and the
 // spend indicator. All bundled in one function since several of these share
 // the same `costInfo` lookup and append in a fixed sequence to the same row.
@@ -182,9 +189,6 @@ function buildBadgeRow(data, doc, dbRef, row){
   if (data.isDemo) badges.appendChild(el("span","badge demobadge","DEMO"));
   if (data.issueType && data.issueType !== "Task") badges.appendChild(el("span","badge epicbadge",data.issueType.toUpperCase()));
   if (!data.reviewed) badges.appendChild(el("span","badge new","new"));
-
-  const bgBadge = buildRunningProcessBadge(data);
-  if (bgBadge) badges.appendChild(bgBadge);
 
   // Sprint the ticket belongs to. Shown even when the board is already scoped
   // to one sprint, because carry-over tickets can belong to several and the
@@ -415,20 +419,6 @@ function buildBadgeRow(data, doc, dbRef, row){
   if (data.reporter){
     const reporterTag = el("span","reportertag", data.reporter);
     badges.appendChild(reporterTag);
-  }
-
-  // Spend indicator — green bar to the right, longer the more tokens consumed.
-  const ticketCosts = [state.sessionCosts["claude:" + data.key], state.sessionCosts["codex:" + data.key]].filter(Boolean);
-  if (ticketCosts.length){
-    const totalTokens = ticketCosts.reduce((sum, info) => sum + (info.inputTokens || 0) + (info.outputTokens || 0), 0);
-    const indicator = document.createElement("div");
-    indicator.className = "spendindicator";
-    indicator.title = totalTokens.toLocaleString() + " tokens";
-    const minWidth = 20;
-    const maxWidth = 150;
-    const width = Math.min(maxWidth, Math.max(minWidth, Math.log(totalTokens + 1) * 10));
-    indicator.style.width = width + "px";
-    badges.appendChild(indicator);
   }
 
   return { badges, costDetailBox, memoryDetailBox };
@@ -695,7 +685,10 @@ export function renderTicketRow(doc, dbRef){
   const subjectCategory = cats[0] && state.categories.find(c => c.id === cats[0]);
   if (subjectCategory && subjectCategory.color) row.style.setProperty("--subject", subjectCategory.color);
 
-  const { top, expandBtn } = buildTopRow(data);
+  const { top, expandBtn, activityDot } = buildTopRow(data);
+  // A sibling of all row content so CSS can center it against the complete
+  // ticket height, including the expanded detail/terminal panel.
+  row.appendChild(activityDot);
   row.appendChild(top);
 
   const { badges, costDetailBox, memoryDetailBox } = buildBadgeRow(data, doc, dbRef, row);
