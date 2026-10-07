@@ -66,6 +66,13 @@ export function applyScrollCap(container, limit){
     const next = kids[i + 1];
     rows.push(next && next.classList && next.classList.contains("epicchildrenwrap") ? next : c);
   });
+  // Layout metrics are all zero while this list or any route/view ancestor is
+  // display:none. Never turn that non-measurement into a real inline
+  // max-height:0 — preserve the last valid cap (or no cap on first load) and
+  // let the board-visible hook remeasure after the router reveals the board.
+  const hiddenByView = container.closest(".hidden, [hidden]");
+  const hasNoLayout = typeof container.getClientRects === "function" && container.getClientRects().length === 0;
+  if (hiddenByView || hasNoLayout) return false;
   if (rows.length > limit){
     container.classList.add("scrollcap");
     const cutoff = rows[limit - 1];
@@ -74,6 +81,7 @@ export function applyScrollCap(container, limit){
     container.classList.remove("scrollcap");
     container.style.maxHeight = "";
   }
+  return true;
 }
 
 /* ---- tiny markdown-lite renderer for knowledge-base docs ---- */

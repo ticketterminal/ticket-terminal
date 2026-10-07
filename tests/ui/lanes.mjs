@@ -21,9 +21,25 @@ const {state}=await import(root+'/public/state.js');
 const {buildLaneItems,renderLaneItems,renderStatusBoard,resetStatusBoardColumns}=await import(root+'/public/lanes.js');
 const {renderSearch,searchForTicket}=await import(root+'/public/filters.js');
 const {renderTicketRow}=await import(root+'/public/ticket-row.js');
+const {applyScrollCap}=await import(root+'/public/dom-utils.js');
 
 const doc=(key,fields)=>({id:key,data:()=>({key,summary:'Summary of '+key,...fields})});
 const cmp=(a,b)=>a.id.localeCompare(b.id);
+
+// A route-hidden board has no layout. Measuring it must not replace a valid
+// ticket-list cap with zero (the "sliver until the next refresh" regression).
+{
+  const hiddenView=document.createElement('div');
+  hiddenView.className='hidden';
+  const list=document.createElement('div');
+  list.style.maxHeight='420px';
+  for(let i=0;i<11;i++) list.appendChild(document.createElement('div')).className='ticketrow';
+  hiddenView.appendChild(list);
+  document.body.appendChild(hiddenView);
+  assert.equal(applyScrollCap(list,10),false,'a route-hidden list refuses zero-valued layout measurements');
+  assert.equal(list.style.maxHeight,'420px','a hidden render preserves the last valid cap');
+  hiddenView.remove();
+}
 
 // --- buildLaneItems: nested vs flat ------------------------------------------------------
 {
@@ -111,10 +127,19 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
     doc('OPS-43',{jiraStatus:'Cancelled',jiraPriority:'Medium'}),
   ];
   state.lastDbRef={};
+  state.workingProcesses=new Set(['codex:OPS-41']);
+  state.runningProcesses=new Set(['codex:OPS-41']);
+  state.sessionCosts['codex:OPS-41']={provider:'codex',cost:1.23,calls:2,models:[]};
   renderStatusBoard();
   const board=document.getElementById('statusBoardView');
   assert.deepEqual([...board.querySelectorAll('.statuscolumnhead h3')].map(n=>n.textContent),['Backlog','In Progress','Done','Cancelled'],'standard Jira statuses follow workflow order, not the raw API order');
   assert.equal(board.querySelector('[data-status="Done"] .tickettitletext').textContent,'OPS-42 — Summary of OPS-42','completed tickets remain visible in the Done column');
+  assert.equal(board.querySelector('[data-status="In Progress"] .agentactivitydot').hidden,false,'a ticket with recent agent output gets the working dot');
+  assert.equal(board.querySelector('[data-status="Backlog"] .agentactivitydot').hidden,true,'an idle ticket keeps its working dot hidden');
+  assert.equal(board.querySelector('[data-status="In Progress"] .agentactivitydot').parentElement.className,'ticketrow','the working dot is anchored to the full ticket height, not the title controls');
+  assert(!board.textContent.includes('Codex running'),'the obsolete running-process badge is not rendered');
+  assert.equal(board.querySelector('.spendindicator'),null,'the redundant logarithmic token bar is not rendered');
+  assert([...board.querySelectorAll('[data-status="In Progress"] .costbadge')].some(b=>b.textContent==='Codex $1.23'),'the useful provider cost badge remains');
   const backlogColumn=board.querySelector('[data-status="Backlog"]');
   const backlogExpand=backlogColumn.querySelector('.rowtri');
   backlogExpand.click();

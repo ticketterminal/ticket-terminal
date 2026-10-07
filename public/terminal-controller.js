@@ -1,42 +1,11 @@
-// The two pieces of a ticket row that reach furthest outside that row's own
-// concerns: the "⚙ running" badge's kill button (mutates the shared
-// runningProcesses set, triggers a full re-render) and the embedded terminal's
-// lazy-start/close lifecycle (mutates the shared liveTerminalCount gate that
-// pauses reloadBoard()/the process-badge poll while a terminal is open). Pulled
-// out of ticket-row.js's renderTicketRow so that function is left with only
-// read-only lookups (sessionCosts, memoryUsage, jiraStatusOptions, etc.).
+// The embedded terminal's lazy-start/close lifecycle. It mutates the shared
+// liveTerminalCount gate that pauses full board reloads while a terminal is
+// open, and starts the lightweight activity/cost polling used by mounted rows.
 import { state } from "./state.js";
 import { apiJson, withWorkspace } from "./api.js";
-import { reloadBoard, startLiveStatsPoll, stopLiveStatsPoll } from "./polling.js";
-import { renderTickets } from "./lanes.js";
+import { startAgentActivityPoll, startLiveStatsPoll, stopLiveStatsPoll } from "./polling.js";
 import { el, categoryLabel } from "./dom-utils.js";
-
-// Returns the "⚙ running" badge button for this ticket, or null if no
-// background process is running for it.
-export function buildRunningProcessBadge(data){
-  const processKey = state.runningProcesses.has(data.key) ? data.key : "codex:" + data.key;
-  if (!state.runningProcesses.has(processKey)) return null;
-  const bgBadge = document.createElement("button");
-  bgBadge.type = "button";
-  bgBadge.className = "badge ro";
-  bgBadge.style.borderColor = "#F28E2B";
-  bgBadge.style.color = "#F28E2B";
-  bgBadge.style.cursor = "pointer";
-  bgBadge.textContent = processKey.startsWith("codex:") ? "⚙ Codex running" : "⚙ Claude running";
-  bgBadge.title = "Background process running — click to stop";
-  bgBadge.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    if (!confirm("Stop the background process for " + data.key + "?")) return;
-    const res = await apiJson("/api/running-processes/" + encodeURIComponent(processKey) + "/kill", {method:"POST"});
-    if (res.ok){
-      state.runningProcesses.delete(processKey);
-      renderTickets(state.lastTicketDocs, state.lastDbRef);
-    } else {
-      alert("Failed to kill process: " + (res.error || "unknown error"));
-    }
-  });
-  return bgBadge;
-}
+import { createAgentTrailView } from "./agent-trail.js";
 
 // Wires a ticket row's expand button so the embedded Claude terminal starts
 // automatically the first time the row is expanded — no separate button.
@@ -58,8 +27,8 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     controls.appendChild(el("p", "demoterminalnote",
       "Demo tickets don't open real sessions. Connect Jira or Notion, then open a real ticket to start a Claude or Codex session."));
   } else for (const provider of ["claude", "codex"]){
-    const panel = document.createElement("div");
-    panel.className = "termhost";
+    const view = createAgentTrailView(data.key, provider);
+    const panel = view.shell;
     panel.hidden = true;
     termHost.parentElement.appendChild(panel);
     const button = document.createElement("button");
@@ -67,6 +36,8 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     button.className = "refreshbtn";
     button.textContent = "Open " + (provider === "codex" ? "Codex" : "Claude");
     controls.appendChild(button);
+    view.toggle.hidden = true;
+    controls.appendChild(view.toggle);
     let started = false;
 
     // The actual spawn/attach, split out from the click handler so "hand the
@@ -88,14 +59,17 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
         button.disabled = false;
       }
       panel.hidden = false;
+      view.toggle.hidden = false;
+      view.activate();
       started = true;
       state.openTerminals.add(panel);
       button.textContent = "Show / hide " + (provider === "codex" ? "Codex" : "Claude");
       state.liveTerminalCount++;
+      startAgentActivityPoll();
       startLiveStatsPoll();
       const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
       const promptText = "Work on " + data.key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
-      window.openTicketTerminal(panel, doc.id, promptText, {
+      window.openTicketTerminal(view.terminal, doc.id, promptText, {
         provider,
         // Two workspaces can both hold a DATAFLINT-7652 and both sessions have
         // to stay alive at once, so the socket says which workspace it is for.
@@ -103,6 +77,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
         onClose: () => {
           started = false;
           button.textContent = "Reopen " + (provider === "codex" ? "Codex" : "Claude");
+          view.shell.disposeAgentTrail?.();
           releaseTerminal(panel);
         }
       });

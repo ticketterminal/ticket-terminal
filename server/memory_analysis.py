@@ -187,7 +187,7 @@ def session_memory_usage(cwd: str, session_id: str) -> dict[str, int]:
     return counts
 
 
-def _codex_transcript_path(session_id: str, home: Path | None = None) -> Path | None:
+def codex_transcript_path(session_id: str, home: Path | None = None) -> Path | None:
     home = Path(home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
     matches = glob.glob(str(home / "sessions" / "**" / f"*{session_id}.jsonl"), recursive=True)
     return Path(matches[0]) if matches else None
@@ -201,7 +201,7 @@ def codex_session_memory_usage(session_id: str) -> dict[str, int]:
     than parsing one exact field, this scans each raw transcript line for the memory file's
     absolute path as a literal substring — tolerant of whichever shape actually produced the
     line, at the cost of being a coarser signal than Claude's exact-Read-tool-call count above."""
-    log_path = _codex_transcript_path(session_id)
+    log_path = codex_transcript_path(session_id)
     if not log_path or not log_path.exists():
         return {}
     ids = _memory_ids()

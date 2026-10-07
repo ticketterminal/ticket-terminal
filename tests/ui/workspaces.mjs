@@ -19,7 +19,7 @@ window.scrollTo=()=>{};
 // stubbed to the surface renderMemoryGraph touches, since what is under test
 // here is the route, not the drawing.
 globalThis.vis={DataSet:class{constructor(items){this.items=items||[];}get(){return this.items;}},
-  Network:class{constructor(){}on(){}once(){}off(){}fit(){}setOptions(){}selectNodes(){}focus(){}redraw(){}}};
+  Network:class{constructor(){}on(){}once(){}off(){}fit(){}setOptions(){}selectNodes(){}focus(){}redraw(){}destroy(){}}};
 window.requestAnimationFrame=callback=>callback();
 // linkedom's HTMLOptionElement.selected doesn't reflect to the attribute its
 // own getter reads, so a real browser's `option.selected = true` is a no-op
@@ -57,6 +57,17 @@ const {state}=await import(root+'/public/state.js');
 const {apiJson,withWorkspace}=await import(root+'/public/api.js');
 const ws=await import(root+'/public/workspaces.js');
 const {renderRoute}=await import(root+'/public/router.js');
+
+// Returning from a full-page route announces that board geometry can be
+// measured again, after gridview has actually been revealed.
+let boardVisibleEvents=0;
+document.addEventListener('wmp:board-visible',()=>{boardVisibleEvents++;});
+location.hash='#/memory';
+renderRoute();
+assert(document.getElementById('gridview').classList.contains('hidden'));
+location.hash='';
+renderRoute();
+assert.equal(boardVisibleEvents,1,'Memory Graph → board schedules a fresh visible-list measurement');
 
 // ---- ?w= is added once, in apiJson, and only for a non-default workspace ----
 state.workspaceSlug='';

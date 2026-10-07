@@ -27,6 +27,7 @@ import os
 import pty
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -37,6 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
 import agent_launch
+import agent_activity
 import content
 import category_management
 import cost_analysis
@@ -58,6 +60,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PUBLIC_DIR = BASE_DIR / "public"
 DEFAULT_WORKDIR = memory_analysis.DEFAULT_WORKDIR  # one WMP_DEFAULT_WORKDIR, read once
 TRACKER_SYNC_INTERVAL_SECONDS = 600  # 10 minutes, for every configured tracker (Jira, Notion) — see .env.example
+# A live CLI redraws its PTY continuously while it is thinking, running tools,
+# or streaming a response, then goes completely quiet at the prompt.  Keep the
+# UI's "working" signal alive across a couple of missed browser polls without
+# equating the much longer-lived process itself with active work.
+AGENT_ACTIVITY_WINDOW_SECONDS = 3.0
 
 app = FastAPI()
 
@@ -829,6 +836,31 @@ def get_ticket_memory_usage():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/api/agent-activity/{key}")
+def get_agent_activity(key: str, provider: str = "claude", limit: int = 100):
+    """Structured tool history for one ticket terminal, from durable JSONL."""
+    if provider not in ("claude", "codex"):
+        return {"ok": False, "error": "unknown provider", "events": []}
+    ticket = db.read()["jiraTickets"].get(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket", "events": []}
+    session_id = ticket.get(provider + "SessionId")
+    if not session_id:
+        return {"ok": True, "events": [], "sessionId": None}
+    if provider == "claude":
+        cwd = ticket.get("workDir") or DEFAULT_WORKDIR
+        if not os.path.isdir(cwd):
+            cwd = DEFAULT_WORKDIR
+        log_path = memory_analysis.claude_project_dir(cwd) / f"{session_id}.jsonl"
+    else:
+        log_path = memory_analysis.codex_transcript_path(session_id)
+    try:
+        events = agent_activity.read_activity(log_path, provider, memory_analysis.memory_dir_info()["path"], limit)
+        return {"ok": True, "events": events, "sessionId": session_id}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "events": [], "sessionId": session_id}
+
+
 @app.get("/api/insights")
 def get_insights():
     """Cost/performance/caching dashboard data — see workflow_insights.compute_insights. Pure
@@ -1009,11 +1041,23 @@ def _process_key_from_wire(wire_key: str) -> str | None:
 def get_running_processes():
     """Ticket keys with background processes running IN THIS WORKSPACE. A
     session in another workspace stays alive but is deliberately invisible
-    here — workspaces are never merged into one view."""
+    here — workspaces are never merged into one view. ``working`` is narrower:
+    it contains only sessions whose PTY has produced output very recently, so
+    an agent sitting idle at its prompt does not look busy."""
     prefix = workspaces.current() + "|"
+    now = time.monotonic()
     with processes_lock:
         keys = [k for k in running_processes if k.startswith(prefix)]
-    return {"ok": True, "running": [_wire_process_key(k) for k in keys]}
+        working = [
+            k for k in keys
+            if now - running_processes[k].get("last_output_at", float("-inf"))
+            <= AGENT_ACTIVITY_WINDOW_SECONDS
+        ]
+    return {
+        "ok": True,
+        "running": [_wire_process_key(k) for k in keys],
+        "working": [_wire_process_key(k) for k in working],
+    }
 
 
 def _live_spend_entries() -> list[dict]:
@@ -1246,7 +1290,13 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
             if not data:
                 break
             transcript.extend(data)
-            info = running_processes.get(process_key, {})
+            # PTY output after a submitted prompt is the provider-neutral signal
+            # that a terminal-backed agent is doing work. Startup/resize redraws
+            # do not count: both CLIs emit those merely from being opened.
+            with processes_lock:
+                info = running_processes.get(process_key, {})
+                if info.get("activity_armed"):
+                    info["last_output_at"] = time.monotonic()
             draft_bytes = terminal_draft.draft_when_ready(info, data)
             if draft_bytes:
                 try:
@@ -1380,13 +1430,23 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                     async def feed():
                         await asyncio.sleep(1.5)
                         try:
+                            with processes_lock:
+                                info = running_processes.get(process_key)
+                                if info:
+                                    info["activity_armed"] = True
                             os.write(master_fd, (prompt + "\n").encode())
                         except OSError:
                             pass
                     asyncio.create_task(feed())
             elif kind == "input":
                 try:
-                    os.write(master_fd, payload.get("data", "").encode())
+                    input_data = payload.get("data", "")
+                    if "\r" in input_data or "\n" in input_data:
+                        with processes_lock:
+                            info = running_processes.get(process_key)
+                            if info:
+                                info["activity_armed"] = True
+                    os.write(master_fd, input_data.encode())
                 except OSError:
                     pass
             elif kind == "resize":

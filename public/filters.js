@@ -508,4 +508,5 @@ export function wireFiltersUI(){
   // instead of waiting for that.
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(updateViewVisibility);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) updateViewVisibility(); });
+  document.addEventListener("wmp:board-visible", updateViewVisibility);
 }

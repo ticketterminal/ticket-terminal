@@ -462,6 +462,7 @@ export function renderTickets(allDocs, dbRef){
   normalizeSprintFilter(); // before any lane is filtered, so a stale remembered sprint can't empty the board for one render
   state.costBadgeEls = []; // every renderTicketRow() call below re-registers whatever it mounts
   state.memoryBadgeEls = [];
+  state.agentActivityEls = [];
   state.categories.forEach(cat => {
     const forCat = allDocs.filter(d => {
       const data = d.data() || {};

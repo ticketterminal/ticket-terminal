@@ -210,7 +210,7 @@
   .foot{margin-top:32px;text-align:center;color:var(--ink-muted);font-size:12px;font-family:"IBM Plex Mono",monospace;}
 
   /* ---- ticket board ---- */
-  .ticketrow{border-top:1px solid var(--line);padding:9px 0;border-left:3px solid var(--subject,var(--line));padding-left:8px;}
+  .ticketrow{position:relative;border-top:1px solid var(--line);padding:9px 0;border-left:3px solid var(--subject,var(--line));padding-left:8px;}
   .ticketrow.ticket-departing{
     position:relative;z-index:2;pointer-events:none;transform-origin:center right;
     animation:ticket-train-departure 900ms cubic-bezier(.55,.02,.82,.24) forwards;
@@ -239,6 +239,10 @@
   .tickettitle{display:flex;align-items:center;gap:6px;min-width:0;}
   .rowtri{border:none;background:none;padding:0;margin:0;font-size:11px;color:var(--accent);cursor:pointer;line-height:1;flex:none;}
   .rowtri:hover{color:var(--ink);}
+  .agentactivitydot{position:absolute;left:-14px;top:50%;margin-top:-3.5px;width:7px;height:7px;border-radius:50%;background:var(--covered);box-shadow:0 0 0 2px var(--covered-bg);animation:agent-activity-blink .9s ease-in-out infinite;}
+  .agentactivitydot[hidden]{display:none;}
+  @keyframes agent-activity-blink{0%,100%{opacity:.25;transform:scale(.82);}50%{opacity:1;transform:scale(1.08);}}
+  @media (prefers-reduced-motion:reduce){.agentactivitydot{animation:none;opacity:1;}}
   .tickettitletext{border:none;background:none;padding:0;margin:0;font-size:13px;color:var(--ink);font-weight:600;font-family:inherit;cursor:pointer;text-align:left;}
   .tickettitletext:hover{color:var(--accent);}
   .ticketlinkicon{font-size:12px;color:var(--ink-muted);text-decoration:none;flex:none;line-height:1;}
@@ -264,8 +268,6 @@
   button.costbadge:hover{background:var(--covered-bg);}
   button.memorybadge{border-color:#7A6FB0;color:#7A6FB0;background:transparent;cursor:pointer;-webkit-appearance:none;appearance:none;}
   button.memorybadge:hover{background:rgba(122,111,176,.14);}
-  .spendindicator{display:inline-flex;align-items:center;height:6px;background:linear-gradient(90deg,#2ecc71,#27ae60);border-radius:3px;opacity:.7;margin-left:auto;flex:none;}
-  .spendindicator:hover{opacity:1;}
   .detailbox{display:flex;flex-direction:column;gap:3px;margin-top:6px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);}
   .detailbox[hidden]{display:none;} /* author display:flex above otherwise beats the UA [hidden] rule outright */
   .detailboxrow{display:flex;justify-content:space-between;gap:12px;font-family:"IBM Plex Mono",monospace;font-size:11px;}
@@ -340,7 +342,8 @@
 
   /* ---- detail view ---- */
   .gridview.hidden, .detailview.hidden, .memoryview.hidden, .settingsview.hidden, .insightsview.hidden, .terminalpageview.hidden{display:none;}
-  .terminalpageview .termhost{height:72vh;margin-top:10px;}
+  .terminalpageview .agentterminal{height:72vh;margin-top:10px;}
+  .terminalpageview .termhost{height:100%;margin-top:0;}
   .backlink{display:inline-flex;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);text-decoration:none;cursor:pointer;background:none;border:none;padding:0;margin-bottom:18px;}
   .backlink:hover{text-decoration:underline;}
   .detailhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
@@ -463,6 +466,33 @@
   .termhost .xterm-viewport::-webkit-scrollbar{width:10px;}
   .termhost .xterm-viewport::-webkit-scrollbar-track{background:transparent;}
   .termhost .xterm-viewport::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:5px;}
+
+  /* Terminal + structured agent history. Closed is a normal full-width
+     terminal; open is deliberately 60/40 in both inline and full-page views. */
+  .agentterminal[hidden]{display:none;}
+  .agentterminal{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0;}
+  .agentterminal.agenttrail-open{grid-template-columns:minmax(0,3fr) minmax(260px,2fr);gap:10px;}
+  .agentterminal>.termhost{min-width:0;margin-top:0;}
+  .agenttrail{min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:4px;overflow:hidden;display:flex;flex-direction:column;color:var(--ink);}
+  .agenttrail[hidden]{display:none;}
+  .agenttrail-head{display:flex;justify-content:space-between;align-items:center;padding:9px 11px;border-bottom:1px solid var(--line);font-family:"IBM Plex Mono",monospace;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+  .agenttrail-head span{color:var(--ink-muted);font-size:10px;}
+  .agenttrail-feed{flex:1 1 auto;min-height:260px;max-height:420px;overflow:auto;scrollbar-width:thin;}
+  .terminalpageview .agenttrail-feed{max-height:none;}
+  .agenttrail-empty{padding:28px 18px;color:var(--ink-muted);font-size:12.5px;line-height:1.5;text-align:center;}
+  .agenttrail-list{padding:4px 10px 14px;}
+  .agenttrail-item{display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px;padding:10px 0;border-bottom:1px solid var(--line);}
+  .agenttrail-item:last-child{border-bottom:0;}
+  .agenttrail-icon{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:1px solid var(--line);color:var(--accent);font-family:"IBM Plex Mono",monospace;font-size:10px;font-weight:700;}
+  .agenttrail-memory .agenttrail-icon{color:#B07AA1}.agenttrail-skill .agenttrail-icon{color:#F28E2B}.agenttrail-write .agenttrail-icon{color:#59A14F}
+  .agenttrail-event{min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:5px;}
+  .agenttrail-eventhead{display:flex;width:100%;align-items:baseline;justify-content:space-between;gap:8px;font-size:12px;}
+  .agenttrail-eventhead time{font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--ink-muted);white-space:nowrap;}
+  .agenttrail-detail{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--ink-muted);background:none;padding:0;}
+  .agenttrail-resource{border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);font-family:"IBM Plex Mono",monospace;font-size:9.5px;padding:3px 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  button.agenttrail-resource{cursor:pointer;color:var(--accent);}
+  button.agenttrail-resource:hover{border-color:var(--accent);}
+  @media(max-width:760px){.agentterminal.agenttrail-open{grid-template-columns:1fr}.agenttrail-feed{max-height:320px}}
 
   /* ---- Insights page ---- */
   .insightsbody{display:flex;flex-direction:column;gap:22px;margin-top:18px;}

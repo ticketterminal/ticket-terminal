@@ -87,6 +87,12 @@ export function renderRoute(){
   }
   hideAll();
   gridview.classList.remove("hidden");
+  // Ticket list caps depend on real row geometry. A render that happened
+  // while another route hid gridview deliberately skipped measurement; wait
+  // one frame for layout, then ask the board to measure its visible view.
+  const notifyBoardVisible = () => document.dispatchEvent(new Event("wmp:board-visible"));
+  if (window.requestAnimationFrame) window.requestAnimationFrame(notifyBoardVisible);
+  else notifyBoardVisible();
 }
 
 export function wireRouterUI(){
