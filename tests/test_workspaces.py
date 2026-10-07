@@ -308,6 +308,20 @@ class IsolationTests(WorkspaceTestCase):
         finally:
             main.running_processes.clear()
 
+    def test_working_processes_only_includes_recent_output(self):
+        main.running_processes.clear()
+        try:
+            now = 100.0
+            main.running_processes['default|claude|A-1'] = {'last_output_at': 98.0}
+            main.running_processes['default|codex|A-2'] = {'last_output_at': 90.0}
+            main.running_processes['default|claude|A-3'] = {}
+            with patch.object(main.time, 'monotonic', return_value=now), workspaces.use('default'):
+                result = main.get_running_processes()
+            self.assertEqual(sorted(result['running']), ['A-1', 'A-3', 'codex:A-2'])
+            self.assertEqual(result['working'], ['A-1'])
+        finally:
+            main.running_processes.clear()
+
     def test_the_browsers_workspace_relative_key_still_kills_the_right_process(self):
         self.ws.register('beta')
         main.running_processes.clear()
