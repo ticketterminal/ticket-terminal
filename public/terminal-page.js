@@ -6,9 +6,11 @@
 import { state } from "./state.js";
 import { apiJson } from "./api.js";
 import { categoryLabel } from "./dom-utils.js";
+import { createAgentTrailView } from "./agent-trail.js";
 
 const hostEl = document.getElementById("terminalPageHost");
 const titleEl = document.getElementById("terminalPageTitle");
+const controlsEl = document.getElementById("terminalPageControls");
 
 // Whichever ticket/provider this page currently holds, so leaving the route
 // (router.js calls this before rendering anything else) releases the
@@ -18,6 +20,7 @@ let current = null;
 export function disposeTerminalPage(){
   if (!current) return;
   try { hostEl.disposeTicketTerminal?.(); } catch (e) { /* already gone */ }
+  controlsEl.replaceChildren();
   current = null;
 }
 
@@ -39,7 +42,11 @@ export async function renderTerminalPage(key, provider){
   }
   const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
   const promptText = "Work on " + key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
-  window.openTicketTerminal(hostEl, key, promptText, {
+  const view = createAgentTrailView(key, provider);
+  hostEl.replaceChildren(view.shell);
+  controlsEl.replaceChildren(view.toggle);
+  hostEl.disposeTicketTerminal = () => view.shell.disposeTicketTerminal?.();
+  window.openTicketTerminal(view.terminal, key, promptText, {
     provider,
     workspace: state.workspaceSlug,
   });

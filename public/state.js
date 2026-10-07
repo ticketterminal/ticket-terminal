@@ -82,6 +82,12 @@ export const state = {
   // Ticket keys with a background Claude process running — from GET /api/running-processes.
   runningProcesses: new Set(),
 
+  // The narrower subset whose PTY has emitted output in the last few seconds.
+  // Unlike runningProcesses, this means the agent is actively thinking,
+  // running a tool, or streaming a response rather than waiting at its prompt.
+  workingProcesses: new Set(),
+  agentActivityEls: [],
+
   // How many embedded terminals are currently live. reloadBoard() and the
   // running-process poll both skip their own re-render while this is > 0, since a
   // re-render would tear down any open terminal's DOM/WebSocket along with it.

@@ -28,6 +28,17 @@ class ResizeThenDisconnectSocket(Socket):
             return self._messages.pop(0)
         return {'type': 'websocket.disconnect'}
 
+class SubmitThenDisconnectSocket(Socket):
+    """Submit one prompt so the activity tracker can distinguish a real turn
+    from the CLI's startup and resize redraws."""
+    def __init__(self):
+        super().__init__()
+        self._messages = [{'type': 'websocket.receive', 'text': json.dumps({'type': 'input', 'data': '\r'})}]
+    async def receive(self):
+        if self._messages:
+            return self._messages.pop(0)
+        return {'type': 'websocket.disconnect'}
+
 class ProviderTests(unittest.TestCase):
     # A temp data root so nothing here can reach the real data/ tree, and so
     # the workspace half of a process key is a known value.
@@ -163,6 +174,24 @@ class ProviderTests(unittest.TestCase):
             asyncio.run(main.terminal_ws(ResizeThenDisconnectSocket(40, 120), 'TEST-1', 'codex'))
         # Once for the initial open (30, 100), once for the live resize message.
         set_winsize.assert_called_with(100, 40, 120)
+
+    def test_submitting_a_prompt_arms_activity_but_opening_alone_does_not(self):
+        self.launch({'codexSessionId': 'saved-id'}, 'codex')
+        self.assertFalse(main.running_processes[self.process_key('TEST-1', 'codex')].get('activity_armed', False))
+        main.running_processes.clear()
+        proc = MagicMock(); proc.poll.return_value = None
+        patches = (
+            patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': {'codexSessionId': 'saved-id'}}}),
+            patch.object(main, '_resolve_agent', return_value=('codex', False)),
+            patch.object(main, '_codex_supports_no_daemon', return_value=False),
+            patch.object(main.pty, 'openpty', return_value=(100, 101)),
+            patch.object(main.os, 'close'), patch.object(main.os, 'write'),
+            patch.object(main.agent_launch, 'set_winsize'),
+            patch.object(main.subprocess, 'Popen', return_value=proc),
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7]:
+            asyncio.run(main.terminal_ws(SubmitThenDisconnectSocket(), 'TEST-1', 'codex'))
+        self.assertTrue(main.running_processes[self.process_key('TEST-1', 'codex')]['activity_armed'])
 
     def test_bridged_session_resize_goes_through_the_handles_resize_method(self):
         proc = MagicMock(); proc.poll.return_value = None
