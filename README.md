@@ -6,7 +6,7 @@
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ticketterminal/ticket-terminal/badge)](https://scorecard.dev/viewer/?uri=github.com/ticketterminal/ticket-terminal)
 
-*Your ticket board, wired directly into the coding agents doing the work.*
+*Your Jira / Notion synced ticket board, wired directly into the coding agents doing the work.*
 
 Ticket Terminal is a local ticket board where every ticket has a **real embedded terminal**: an
 actual `claude` or `codex` session, scoped to that ticket, that can pick up the work, run real
