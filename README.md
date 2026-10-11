@@ -14,6 +14,11 @@ commands, and leave a permanent transcript behind. Underneath the board sits a *
 that you and your agents both read and write.
 
 <p align="center">
+  <img src="docs/assets/ticket-terminal-demo.gif" alt="Ticket Terminal walkthrough: a ticket opens an embedded Codex terminal and an agent trail showing commands, files, and shared memory used during the session" width="100%">
+  <br><sub>Current app mechanics with safe sample data: open a ticket, launch its agent session, and inspect the agent trail.</sub>
+</p>
+
+<p align="center">
   <img src="docs/assets/screenshot-board.png" alt="The Ticket Terminal board in dark mode: tickets with status, priority, team and cost badges, and one ticket expanded to show an embedded Claude session working on it" width="900">
   <br><sub>Sample tickets and an illustrative session. Each ticket opens its own Claude or Codex terminal, with the cost badge coming from <code>codeburn</code>.</sub>
 </p>
