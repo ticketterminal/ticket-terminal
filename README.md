@@ -71,10 +71,11 @@ access, can use the same folder; point it there from its own instructions file (
 
 ## Quick start
 
-Two ways to run it: directly with Python, or in Docker. Either way you end up with the same app at
-**http://127.0.0.1:4173** — there is no build step and no separate frontend process.
+The recommended path is Python and `uv`; it uses the Claude/Codex CLI already installed and signed
+in on your machine. Docker is available as a packaging alternative. Either way you end up with the
+same app at **http://127.0.0.1:4173** — there is no frontend build step.
 
-### Option 1: Python
+### Recommended: Python + uv
 
 Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/getting-started/installation/), and the
 [`claude`](https://docs.claude.com/en/docs/claude-code) and/or
@@ -82,10 +83,17 @@ Requirements: Python 3.12, [`uv`](https://docs.astral.sh/uv/getting-started/inst
 cost badges, and a Jira or Notion account for ticket sync.
 
 ```bash
+git clone https://github.com/ticketterminal/ticket-terminal.git
+cd ticket-terminal
 uv venv && uv pip install --require-hashes -r requirements.txt
 source .venv/bin/activate
 python server/main.py
 ```
+
+Then open **http://127.0.0.1:4173**, connect Jira or Notion in **Settings**, expand a real ticket,
+and choose **Open Claude** or **Open Codex**. If you try the public preview, please file a short
+[install report](https://github.com/ticketterminal/ticket-terminal/issues/new?template=install-report.yml)—successful
+runs are useful too. Do not include credentials or private ticket content.
 
 To show cost badges, install codeburn once:
 
@@ -93,7 +101,7 @@ To show cost badges, install codeburn once:
 npm install -g codeburn
 ```
 
-### Option 2: Docker
+### Alternative: Docker
 
 Use this if you would rather not manage a Python venv (and Node, for cost badges) on your own
 machine. The image bundles Python, Node, and both the `claude` and `codex` CLIs; what it does
