@@ -1,0 +1,98 @@
+name: Install report
+description: Tell us whether you reached your first real ticket and agent session.
+title: "Install report: "
+labels:
+  - install-report
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Ticket Terminal. Success reports are as useful as failures: they tell us which setup paths actually work.
+
+        Please remove credentials, tokens, private repository names, and ticket content from anything you paste.
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - Opened a real ticket and agent session
+        - Loaded real tickets but could not open an agent session
+        - Started the app but could not load real tickets
+        - Could not start the app
+    validations:
+      required: true
+
+  - type: input
+    id: time
+    attributes:
+      label: Time to first real agent session
+      description: Give a rough duration, or write "not reached."
+      placeholder: 12 minutes
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install path
+      options:
+        - Python / uv
+        - Docker
+        - Docker with host bridge
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 26.0, Ubuntu 24.04, Windows 11 + WSL2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent used
+      multiple: true
+      options:
+        - Claude Code
+        - Codex CLI
+        - Neither reached
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tracker
+    attributes:
+      label: Tracker used
+      multiple: true
+      options:
+        - Jira
+        - Notion
+        - Neither reached
+    validations:
+      required: true
+
+  - type: textarea
+    id: friction
+    attributes:
+      label: Where did you hesitate or get stuck?
+      description: Include the command and sanitized error text if something failed.
+      placeholder: I expected... / The first confusing step was... / Sanitized error...
+
+  - type: textarea
+    id: value
+    attributes:
+      label: What made the product useful—or not useful?
+      description: A sentence in your own words is enough.
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, tokens, private repository names, and private ticket content.
+          required: true
