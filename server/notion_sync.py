@@ -53,6 +53,9 @@ NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
 # live per-request, so pinning here keeps this adapter working regardless of
 # what the workspace itself is on.
 NOTION_VERSION = "2022-06-28"
+# Comment editing is a newer API surface. Keep database reads on the legacy
+# version above, but opt only comment calls into the current contract.
+NOTION_COMMENTS_VERSION = "2026-03-11"
 DEFAULT_REDIRECT_URI = "http://localhost:4173/api/notion/oauth/callback"
 OAUTH_STATE_TTL_SECONDS = 600
 # 100 rows per request. High enough that a real board is fetched whole (the
@@ -107,6 +110,7 @@ def get_config():
         "auth_mode": n.get("authMode") or ("token" if not n.get("accessToken") and os.environ.get("NOTION_TOKEN") else ""),
         "workspace_name": n.get("workspaceName") or "",
         "workspace_id": n.get("workspaceId") or "",
+        "bot_id": n.get("botId") or "",
         "database_id": _normalize_id(n.get("databaseId") or os.environ.get("NOTION_DATABASE_ID", "")),
         "status_property": n.get("statusProperty") or "",
         "priority_property": n.get("priorityProperty") or "",
@@ -282,18 +286,19 @@ def set_internal_token(token: str):
 
 # ---------- HTTP ----------
 
-def _headers(token: str) -> dict:
-    return {"Authorization": "Bearer " + token, "Notion-Version": NOTION_VERSION, "Content-Type": "application/json"}
+def _headers(token: str, notion_version: str = NOTION_VERSION) -> dict:
+    return {"Authorization": "Bearer " + token, "Notion-Version": notion_version, "Content-Type": "application/json"}
 
 
-def _request(method: str, path: str, *, retry_auth: bool = True, **kwargs) -> dict:
+def _request(method: str, path: str, *, retry_auth: bool = True,
+             notion_version: str = NOTION_VERSION, **kwargs) -> dict:
     c = get_config()
     if not c["access_token"]:
         raise _not_configured_error()
-    resp = requests.request(method, NOTION_API + path, headers=_headers(c["access_token"]), timeout=REQUEST_TIMEOUT, **kwargs)
+    resp = requests.request(method, NOTION_API + path, headers=_headers(c["access_token"], notion_version), timeout=REQUEST_TIMEOUT, **kwargs)
     if resp.status_code == 401 and retry_auth and c["refresh_token"] and c["client_id"] and c["client_secret"]:
         refresh_access_token()
-        return _request(method, path, retry_auth=False, **kwargs)
+        return _request(method, path, retry_auth=False, notion_version=notion_version, **kwargs)
     if resp.status_code >= 400:
         try:
             message = resp.json().get("message") or resp.text
@@ -1365,3 +1370,60 @@ def set_status(ticket: dict, status_name: str):
 
 def set_priority(ticket: dict, priority_name: str):
     _set_property(ticket, "priority", priority_name)
+
+
+# ---------- comments ----------
+
+def _comment_text(text: str) -> list[dict]:
+    return [{"type": "text", "text": {"content": text}}]
+
+
+def _normalize_comment(comment: dict) -> dict:
+    creator = comment.get("created_by") or {}
+    bot_id = get_config().get("bot_id") or ""
+    display = comment.get("display_name") or {}
+    author = (display.get("resolved_name") if isinstance(display, dict) else "") or creator.get("name") or "Notion user"
+    return {
+        "id": str(comment.get("id") or ""),
+        "body": _rich_text_to_plain(comment.get("rich_text") or []),
+        "author": author,
+        "createdAt": comment.get("created_time") or "",
+        "updatedAt": comment.get("last_edited_time") or "",
+        # Notion only permits a connection to update comments it created.
+        "editable": bool(bot_id and creator.get("id") == bot_id),
+    }
+
+
+def get_comments(ticket: dict) -> list[dict]:
+    page_id = ticket.get("notionPageId")
+    if not page_id:
+        raise NotionError("this ticket has no Notion page id")
+    comments, cursor = [], None
+    while True:
+        params = {"block_id": page_id, "page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        page = _request("GET", "/comments", params=params, notion_version=NOTION_COMMENTS_VERSION)
+        comments.extend(_normalize_comment(item) for item in page.get("results") or [])
+        if not page.get("has_more"):
+            break
+        cursor = page.get("next_cursor")
+    return comments
+
+
+def add_comment(ticket: dict, text: str) -> dict:
+    page_id = ticket.get("notionPageId")
+    if not page_id:
+        raise NotionError("this ticket has no Notion page id")
+    comment = _request("POST", "/comments", json={
+        "parent": {"page_id": page_id},
+        "rich_text": _comment_text(text),
+    }, notion_version=NOTION_COMMENTS_VERSION)
+    return _normalize_comment(comment)
+
+
+def update_comment(ticket: dict, comment_id: str, text: str) -> dict:
+    comment = _request("PATCH", f"/comments/{comment_id}", json={
+        "rich_text": _comment_text(text),
+    }, notion_version=NOTION_COMMENTS_VERSION)
+    return _normalize_comment(comment)

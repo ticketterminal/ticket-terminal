@@ -16,6 +16,8 @@ import { costBadgeText, costBadgeTitle, renderCostDetail, renderMemoryDetail } f
 import { attachTerminal } from "./terminal-controller.js";
 import { routeHash } from "./workspaces.js";
 import { searchForTicket } from "./filters.js";
+import { createChangeRequestView } from "./change-requests.js";
+import { createTicketCommentsView } from "./ticket-comments.js";
 
 const STATUS_SELECT_ORDER = [
   "cancelled", "canceled", "backlog", "open", "to do", "todo",
@@ -496,7 +498,7 @@ function buildTagRow(data, doc, dbRef, cats){
 }
 
 // Expand panel — the embedded Claude terminal (auto-starts via
-// terminal-controller.js), MR link, memory-usage breakdown, then the
+// terminal-controller.js), PR/MR links, memory-usage breakdown, then the
 // activity-log/notes at the bottom. Local-app-only features a sandboxed
 // Artifact page could never provide (no local process execution, no
 // persistent per-ticket session history). Returns {expandPanel, termHost} —
@@ -594,30 +596,13 @@ function buildExpandPanel(data, doc, dbRef){
   termWrap.appendChild(termHost);
   expandPanel.appendChild(termWrap);
 
-  const mrWrap = el("div","mrlinkrow");
-  mrWrap.appendChild(el("span","reflabel","MR link"));
-  const mrInput = document.createElement("input");
-  mrInput.type = "url";
-  mrInput.className = "mrlinkinput";
-  mrInput.placeholder = "https://gitlab.com/.../merge_requests/...";
-  mrInput.value = data.mrLink || "";
-  if (data.isDemo){
-    mrInput.disabled = true;
-    mrInput.placeholder = "Demo ticket — not editable";
-  } else {
-    let mrPrev = mrInput.value;
-    mrInput.addEventListener("blur", () => {
-      if (mrInput.value !== mrPrev){ mrPrev = mrInput.value; touch(dbRef, doc.id, {mrLink: mrInput.value.trim()}); }
-    });
-  }
-  mrWrap.appendChild(mrInput);
-  if (data.mrLink){
-    const mrOpen = document.createElement("a");
-    mrOpen.href = data.mrLink; mrOpen.target = "_blank"; mrOpen.rel = "noopener noreferrer";
-    mrOpen.className = "copybtn"; mrOpen.textContent = "Open MR";
-    mrWrap.appendChild(mrOpen);
-  }
-  expandPanel.appendChild(mrWrap);
+  const changeRequestView = createChangeRequestView(doc.id, data);
+  expandPanel.changeRequestView = changeRequestView;
+  expandPanel.appendChild(changeRequestView.shell);
+
+  const ticketCommentsView = createTicketCommentsView(doc.id, data);
+  expandPanel.ticketCommentsView = ticketCommentsView;
+  expandPanel.appendChild(ticketCommentsView.shell);
 
   for (const provider of ["claude", "codex"]){
     const usage = state.memoryUsage[provider + ":" + data.key];
@@ -641,7 +626,7 @@ function buildExpandPanel(data, doc, dbRef){
   }
 
   const notesWrap = el("div","noteswrap");
-  notesWrap.appendChild(el("span","reflabel","Activity log"));
+  notesWrap.appendChild(el("span","reflabel","Local activity log"));
   const notesList = el("div","noteslist");
   (data.notes || []).forEach(n => {
     const line = el("div","noteline");

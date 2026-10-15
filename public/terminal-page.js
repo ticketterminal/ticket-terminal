@@ -7,6 +7,7 @@ import { state } from "./state.js";
 import { apiJson } from "./api.js";
 import { categoryLabel } from "./dom-utils.js";
 import { createAgentTrailView } from "./agent-trail.js";
+import { createChangeRequestView } from "./change-requests.js";
 
 const hostEl = document.getElementById("terminalPageHost");
 const titleEl = document.getElementById("terminalPageTitle");
@@ -19,6 +20,7 @@ let current = null;
 
 export function disposeTerminalPage(){
   if (!current) return;
+  current.changeRequestView?.dispose();
   try { hostEl.disposeTicketTerminal?.(); } catch (e) { /* already gone */ }
   controlsEl.replaceChildren();
   current = null;
@@ -42,9 +44,12 @@ export async function renderTerminalPage(key, provider){
   }
   const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
   const promptText = "Work on " + key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
-  const view = createAgentTrailView(key, provider);
+  const view = createAgentTrailView(key, provider, data);
+  const changeRequestView = createChangeRequestView(key, data, {compact:true});
+  current.changeRequestView = changeRequestView;
   hostEl.replaceChildren(view.shell);
-  controlsEl.replaceChildren(view.toggle);
+  controlsEl.replaceChildren(changeRequestView.shell, view.toggle, view.summaryToggle);
+  changeRequestView.start();
   hostEl.disposeTicketTerminal = () => view.shell.disposeTicketTerminal?.();
   window.openTicketTerminal(view.terminal, key, promptText, {
     provider,
