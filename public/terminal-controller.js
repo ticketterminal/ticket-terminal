@@ -27,7 +27,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     controls.appendChild(el("p", "demoterminalnote",
       "Demo tickets don't open real sessions. Connect Jira or Notion, then open a real ticket to start a Claude or Codex session."));
   } else for (const provider of ["claude", "codex"]){
-    const view = createAgentTrailView(data.key, provider);
+    const view = createAgentTrailView(data.key, provider, data);
     const panel = view.shell;
     panel.hidden = true;
     termHost.parentElement.appendChild(panel);
@@ -37,7 +37,9 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     button.textContent = "Open " + (provider === "codex" ? "Codex" : "Claude");
     controls.appendChild(button);
     view.toggle.hidden = true;
+    view.summaryToggle.hidden = true;
     controls.appendChild(view.toggle);
+    controls.appendChild(view.summaryToggle);
     let started = false;
 
     // The actual spawn/attach, split out from the click handler so "hand the
@@ -60,6 +62,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
       }
       panel.hidden = false;
       view.toggle.hidden = false;
+      view.summaryToggle.hidden = false;
       view.activate();
       started = true;
       state.openTerminals.add(panel);
@@ -163,6 +166,13 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     expandBtn.textContent = expanded ? "▾" : "▸";
     expandBtn.setAttribute("aria-expanded", String(expanded));
     expandBtn.setAttribute("aria-label", expanded ? "Collapse ticket details" : "Expand ticket details");
+    if (expanded){
+      expandPanel.changeRequestView?.start();
+      expandPanel.ticketCommentsView?.start();
+    } else {
+      expandPanel.changeRequestView?.stop();
+      expandPanel.ticketCommentsView?.stop();
+    }
     // On the Jira-style board, give the terminal-bearing column two grid
     // tracks while any ticket inside it is open. The ordinary click cannot be
     // delegated because this handler deliberately stops it from bubbling

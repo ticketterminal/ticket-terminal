@@ -83,6 +83,61 @@ class AgentActivityParserTests(unittest.TestCase):
         self.assertEqual(event["kind"], "command")
         self.assertEqual(event["resource"]["id"], "login-to-aws")
 
+    def test_multi_file_patch_exposes_every_changed_object(self):
+        patch_text = """*** Begin Patch
+*** Update File: public/app.js
+*** Add File: server/summary.py
+*** Delete File: docs/old.md
+*** End Patch"""
+        rows = [{"type": "response_item", "payload": {
+            "type": "custom_tool_call", "call_id": "patch-1", "name": "apply_patch",
+            "input": patch_text,
+        }}]
+        event = agent_activity.read_activity(self.write_jsonl("patch.jsonl", rows), "codex", self.memory)[0]
+        self.assertEqual(event["title"], "Change 3 files")
+        self.assertEqual([r["label"] for r in event["resources"]], ["app.js", "summary.py", "old.md"])
+        self.assertEqual([r["action"] for r in event["resources"]], ["update", "add", "delete"])
+
+    def test_manager_summary_uses_ticket_intent_and_recorded_evidence(self):
+        events = [
+            {"kind": "search", "title": "Search files", "detail": "comments"},
+            {"kind": "memory", "title": "Read memory", "resource": {"type": "memory", "id": "jira", "label": "jira.md"}},
+            {"kind": "write", "title": "Change api.py", "resources": [{"type": "file", "label": "api.py", "path": "/repo/api.py", "action": "update"}]},
+            {"kind": "command", "title": "Run command", "detail": "python -m unittest"},
+        ]
+        summary = agent_activity.summarize_activity(events, {
+            "key": "ENG-1", "summary": "Add comments", "description": "Let managers review ticket discussion.\n\nMore detail.",
+        })
+        self.assertEqual(summary["why"], "Let managers review ticket discussion.")
+        self.assertEqual([phase["id"] for phase in summary["flow"]], ["investigate", "knowledge", "change", "verify"])
+        self.assertEqual(summary["objects"][0]["label"], "api.py")
+        self.assertEqual(summary["knowledge"][0]["id"], "jira")
+        self.assertIn("Changed 1 named object", summary["facts"])
+
+    def test_manager_story_uses_the_real_request_reasoning_and_outcome(self):
+        rows = [
+            {"type": "user", "message": {"role": "user", "content": "Work on ENG-1 (platform): Make deploys safer\nhttps://jira/ENG-1"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I checked the rollout path first because changing production directly would be risky."}]}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I added the guard, ran the tests, and verified the staged rollout."}]}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The safer deploy path is live and all tests pass."}]}},
+        ]
+        story = agent_activity.read_story(self.write_jsonl("story.jsonl", rows), "claude", {"summary": "Make deploys safer"})
+        self.assertEqual(story["request"], "Make deploys safer")
+        self.assertIn("because changing production directly would be risky", story["rationale"])
+        self.assertIn("added the guard", story["approach"])
+        self.assertEqual(story["outcome"], "The safer deploy path is live and all tests pass.")
+
+    def test_codex_manager_story_reads_user_and_agent_messages(self):
+        rows = [
+            {"payload": {"type": "user_message", "message": "Explain the migration"}},
+            {"payload": {"type": "agent_message", "message": "I inspected the schema because preserving existing rows was required."}},
+            {"payload": {"type": "agent_message", "message": "The migration completed without dropping data."}},
+        ]
+        story = agent_activity.read_story(self.write_jsonl("codex-story.jsonl", rows), "codex", {"summary": "Migration"})
+        self.assertEqual(story["request"], "Explain the migration")
+        self.assertIn("preserving existing rows", story["rationale"])
+        self.assertIn("without dropping data", story["outcome"])
+
     def test_reader_bounds_work_to_the_transcript_tail_and_caches_it(self):
         old = {"message": {"content": [{"type": "tool_use", "id": "old", "name": "Bash", "input": {"command": "old command"}}]}}
         recent = {"message": {"content": [{"type": "tool_use", "id": "new", "name": "Bash", "input": {"command": "new command"}}]}}
@@ -118,7 +173,9 @@ class AgentActivityEndpointTests(unittest.TestCase):
     def test_endpoint_returns_an_empty_trail_before_session_id_exists(self):
         with patch.object(main.db, "read", return_value={"jiraTickets": {"T-1": {}}}):
             result = main.get_agent_activity("T-1", "claude")
-        self.assertEqual(result, {"ok": True, "events": [], "sessionId": None})
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["sessionId"], None)
+        self.assertEqual(result["summary"]["headline"], "No recorded work yet.")
 
     def test_endpoint_rejects_unknown_provider(self):
         self.assertFalse(main.get_agent_activity("T-1", "shell")["ok"])
