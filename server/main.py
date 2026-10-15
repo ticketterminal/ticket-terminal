@@ -39,6 +39,7 @@ from starlette.websockets import WebSocketDisconnect
 
 import agent_launch
 import agent_activity
+import change_requests
 import content
 import category_management
 import cost_analysis
@@ -318,6 +319,62 @@ def patch_ticket(key: str, patch: dict = Body(...)):
 @app.post("/api/tickets/{key}/notes")
 def post_note(key: str, body: dict = Body(...)):
     return db.add_note(key, body.get("text", ""))
+
+
+def _ticket_comment_target(key: str):
+    ticket = db.read()["jiraTickets"].get(key)
+    if ticket is None:
+        return None, None, None
+    source = ticket_source(ticket)
+    return ticket, source, TRACKERS.get(source)
+
+
+@app.get("/api/tickets/{key}/comments")
+def get_ticket_comments(key: str):
+    ticket, source, tracker = _ticket_comment_target(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket"}
+    if tracker is None:
+        return {"ok": False, "tracker": source, "error": "unsupported ticket source"}
+    try:
+        comments = tracker.get_comments(ticket if source == "notion" else key)
+        return {"ok": True, "tracker": source, "comments": comments}
+    except Exception as e:
+        return {"ok": False, "tracker": source, "error": str(e)}
+
+
+@app.post("/api/tickets/{key}/comments")
+def add_ticket_comment(key: str, body: dict = Body(...)):
+    ticket, source, tracker = _ticket_comment_target(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket"}
+    if tracker is None:
+        return {"ok": False, "tracker": source, "error": "unsupported ticket source"}
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "tracker": source, "error": "comment cannot be empty"}
+    try:
+        comment = tracker.add_comment(ticket if source == "notion" else key, text)
+        return {"ok": True, "tracker": source, "comment": comment}
+    except Exception as e:
+        return {"ok": False, "tracker": source, "error": str(e)}
+
+
+@app.patch("/api/tickets/{key}/comments/{comment_id}")
+def update_ticket_comment(key: str, comment_id: str, body: dict = Body(...)):
+    ticket, source, tracker = _ticket_comment_target(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket"}
+    if tracker is None:
+        return {"ok": False, "tracker": source, "error": "unsupported ticket source"}
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "tracker": source, "error": "comment cannot be empty"}
+    try:
+        comment = tracker.update_comment(ticket if source == "notion" else key, comment_id, text)
+        return {"ok": True, "tracker": source, "comment": comment}
+    except Exception as e:
+        return {"ok": False, "tracker": source, "error": str(e)}
 
 
 @app.get("/api/people")
@@ -846,7 +903,9 @@ def get_agent_activity(key: str, provider: str = "claude", limit: int = 100):
         return {"ok": False, "error": "no such ticket", "events": []}
     session_id = ticket.get(provider + "SessionId")
     if not session_id:
-        return {"ok": True, "events": [], "sessionId": None}
+        summary = agent_activity.summarize_activity([], ticket)
+        summary["story"] = agent_activity.read_story(None, provider, ticket)
+        return {"ok": True, "events": [], "summary": summary, "sessionId": None}
     if provider == "claude":
         cwd = ticket.get("workDir") or DEFAULT_WORKDIR
         if not os.path.isdir(cwd):
@@ -856,9 +915,47 @@ def get_agent_activity(key: str, provider: str = "claude", limit: int = 100):
         log_path = memory_analysis.codex_transcript_path(session_id)
     try:
         events = agent_activity.read_activity(log_path, provider, memory_analysis.memory_dir_info()["path"], limit)
-        return {"ok": True, "events": events, "sessionId": session_id}
+        summary = agent_activity.summarize_activity(events, ticket)
+        summary["story"] = agent_activity.read_story(log_path, provider, ticket)
+        return {"ok": True, "events": events, "summary": summary, "sessionId": session_id}
     except Exception as e:
         return {"ok": False, "error": str(e), "events": [], "sessionId": session_id}
+
+
+def _ticket_session_log(ticket: dict, provider: str):
+    session_id = ticket.get(provider + "SessionId")
+    if not session_id:
+        return None
+    if provider == "claude":
+        cwd = ticket.get("workDir") or DEFAULT_WORKDIR
+        if not os.path.isdir(cwd):
+            cwd = DEFAULT_WORKDIR
+        return memory_analysis.claude_project_dir(cwd) / f"{session_id}.jsonl"
+    return memory_analysis.codex_transcript_path(session_id)
+
+
+@app.post("/api/tickets/{key}/change-requests/refresh")
+def refresh_ticket_change_requests(key: str):
+    """Discover and durably materialize PR/MR links from structured sessions.
+
+    This is an explicit POST because discovery can add records to the ticket.
+    Once materialized, a link survives restarts and transcript-tail limits.
+    """
+    ticket = db.read()["jiraTickets"].get(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket", "changeRequests": []}
+    stored = ticket.get("changeRequests") if isinstance(ticket.get("changeRequests"), list) else []
+    legacy = [{"url": ticket["mrLink"], "source": "legacy-manual"}] if ticket.get("mrLink") else []
+    discovered = []
+    try:
+        for provider in ("claude", "codex"):
+            discovered.extend(change_requests.read_change_requests(_ticket_session_log(ticket, provider), provider))
+        merged = change_requests.merge_change_requests(stored, legacy, discovered)
+        if merged != stored:
+            db.update_ticket(key, {"changeRequests": merged})
+        return {"ok": True, "changeRequests": merged}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "changeRequests": change_requests.merge_change_requests(stored, legacy)}
 
 
 @app.get("/api/insights")

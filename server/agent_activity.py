@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -23,6 +24,7 @@ _SECRET_FLAG_RE = re.compile(
 )
 MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024
 _CACHE: dict[tuple, list[dict]] = {}
+_STORY_CACHE: dict[tuple, dict] = {}
 
 
 def _compact(value: Any, limit: int = 180) -> str:
@@ -71,10 +73,32 @@ def _resource_from_inputs(inputs: dict, memory_dir: Path) -> dict | None:
     return _resource_for_path(skill.group(1), memory_dir) if skill else None
 
 
+def _resources_from_inputs(inputs: dict, memory_dir: Path) -> list[dict]:
+    """Every named object touched by one call, including multi-file patches."""
+    resources = []
+    explicit = _resource_from_inputs(inputs, memory_dir)
+    if explicit:
+        resources.append(explicit)
+    patch_text = "\n".join(str(inputs.get(key) or "") for key in ("patch", "input", "command", "cmd"))
+    for match in re.finditer(r"^\*\*\* (Add|Update|Delete) File: (.+?)\s*$", patch_text, re.MULTILINE):
+        resource = _resource_for_path(match.group(2).strip(), memory_dir)
+        if resource:
+            resource = {**resource, "action": match.group(1).lower()}
+            resources.append(resource)
+    unique = {}
+    for resource in resources:
+        identity = resource.get("path") or (resource.get("type"), resource.get("id"), resource.get("label"))
+        previous = unique.get(identity)
+        if previous is None or (resource.get("action") and not previous.get("action")):
+            unique[identity] = resource
+    return list(unique.values())
+
+
 def _event(tool: str, inputs: dict, timestamp: str, memory_dir: Path) -> dict:
     lowered = tool.lower()
     path = inputs.get("file_path") or inputs.get("path") or inputs.get("notebook_path")
-    resource = _resource_from_inputs(inputs, memory_dir)
+    resources = _resources_from_inputs(inputs, memory_dir)
+    resource = resources[0] if resources else None
     event = {"kind": "tool", "title": _compact(tool) or "Tool action", "detail": "", "timestamp": timestamp or ""}
 
     if lowered in {"bash", "shell", "exec_command", "run_command", "command_execution"}:
@@ -88,7 +112,10 @@ def _event(tool: str, inputs: dict, timestamp: str, memory_dir: Path) -> dict:
     elif lowered in {"read", "read_file"}:
         event.update(kind="read", title="Read " + (resource or {}).get("label", "file"), detail=str(path or ""))
     elif lowered in {"write", "write_file", "edit", "apply_patch", "multi_edit"}:
-        event.update(kind="write", title="Change " + (resource or {}).get("label", "files"), detail=str(path or ""))
+        label = (resource or {}).get("label", "files")
+        title = f"Change {len(resources)} files" if len(resources) > 1 else "Change " + label
+        detail = str(path or "") or ", ".join(item.get("label", "") for item in resources[:3])
+        event.update(kind="write", title=title, detail=detail)
     elif lowered in {"grep", "glob", "find", "search_files", "toolsearch"}:
         query = inputs.get("pattern") or inputs.get("query") or inputs.get("glob") or ""
         title = "Find tools" if lowered == "toolsearch" else "Search files"
@@ -110,8 +137,208 @@ def _event(tool: str, inputs: dict, timestamp: str, memory_dir: Path) -> dict:
         elif resource["type"] == "skill" and lowered in {"read", "read_file"}:
             event["kind"] = "skill"
             event["title"] = "Use skill"
+    if resources:
+        event["resources"] = resources
     event["detail"] = _compact(event.get("detail"))
     return event
+
+
+def _flow_stage(event: dict) -> tuple[str, str]:
+    kind = event.get("kind") or "tool"
+    detail = (event.get("detail") or "").lower()
+    if kind in {"read", "search", "web"}:
+        return "investigate", "Investigate"
+    if kind in {"memory", "skill"}:
+        return "knowledge", "Use knowledge"
+    if kind == "write":
+        return "change", "Make changes"
+    if kind == "integration":
+        return "coordinate", "Coordinate"
+    if kind == "command":
+        if re.search(r"\b(test|pytest|unittest|npm test|cargo test|go test|lint|typecheck|compile|build)\b", detail):
+            return "verify", "Verify"
+        if re.search(r"\b(git (commit|push)|gh pr|glab mr)\b", detail):
+            return "deliver", "Deliver"
+        if "login" in detail or "auth" in detail:
+            return "access", "Get access"
+        if re.search(r"\bgit (status|diff|log|show)\b", detail):
+            return "investigate", "Inspect changes"
+        return "operate", "Run tooling"
+    return "operate", "Use tooling"
+
+
+def summarize_activity(events: list[dict], ticket: dict) -> dict:
+    """Evidence-only manager view derived from ticket intent + recorded calls."""
+    counts = Counter(event.get("kind") or "tool" for event in events)
+    objects = {}
+    knowledge = {}
+    phases = []
+    for event in events:
+        stage, label = _flow_stage(event)
+        detail = event.get("title") or event.get("detail") or "Agent action"
+        if phases and phases[-1]["id"] == stage:
+            phases[-1]["count"] += 1
+            phases[-1]["detail"] = detail
+        else:
+            phases.append({"id": stage, "label": label, "detail": detail, "count": 1})
+        resources = event.get("resources") or ([event["resource"]] if event.get("resource") else [])
+        for resource in resources:
+            identity = resource.get("path") or resource.get("id") or resource.get("label")
+            if not identity:
+                continue
+            if event.get("kind") == "write":
+                existing = objects.get(identity, {})
+                objects[identity] = {
+                    "type": resource.get("type") or "file",
+                    "label": resource.get("label") or str(identity),
+                    "path": resource.get("path") or "",
+                    "action": resource.get("action") or existing.get("action") or "change",
+                }
+            if resource.get("type") in {"memory", "skill"}:
+                knowledge[identity] = resource
+
+    summary = _compact(ticket.get("summary") or ticket.get("key") or "this ticket", 180)
+    description = str(ticket.get("description") or "").strip()
+    why = _compact(description.split("\n\n", 1)[0] if description else summary, 320)
+    facts = []
+    if objects:
+        facts.append(f"Changed {len(objects)} named object{'s' if len(objects) != 1 else ''}")
+    elif counts["write"]:
+        facts.append(f"Made {counts['write']} change action{'s' if counts['write'] != 1 else ''}; paths were not exposed")
+    if counts["command"]:
+        facts.append(f"Ran {counts['command']} command{'s' if counts['command'] != 1 else ''}")
+    if counts["memory"] + counts["skill"]:
+        total = counts["memory"] + counts["skill"]
+        facts.append(f"Used {total} memory/skill reference{'s' if total != 1 else ''}")
+    if counts["web"] + counts["integration"]:
+        total = counts["web"] + counts["integration"]
+        facts.append(f"Made {total} external lookup{'s' if total != 1 else ''}")
+    return {
+        "headline": ("Work recorded toward “" + summary + "”.") if events else "No recorded work yet.",
+        "why": why,
+        "facts": facts,
+        "actionCount": len(events),
+        "flow": phases[-10:],
+        "objects": list(objects.values()),
+        "knowledge": list(knowledge.values()),
+    }
+
+
+def _message_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(
+            str(item.get("text") or "") for item in value
+            if isinstance(item, dict) and item.get("type") in {"text", "input_text", "output_text"}
+        )
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("message") or "")
+    return ""
+
+
+def _conversation_message(entry: dict, provider: str) -> tuple[str, str] | None:
+    if provider == "claude":
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        role = str(message.get("role") or entry.get("type") or "")
+        if role not in {"user", "assistant"}:
+            return None
+        text = _message_text(message.get("content"))
+        return (role, text) if text.strip() else None
+
+    payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
+    kind = str(payload.get("type") or "")
+    role = str(payload.get("role") or "")
+    if kind == "user_message":
+        role, text = "user", _message_text(payload.get("message") or payload.get("content"))
+    elif kind in {"agent_message", "assistant_message"}:
+        role, text = "assistant", _message_text(payload.get("message") or payload.get("content"))
+    elif kind == "message" and role in {"user", "assistant"}:
+        text = _message_text(payload.get("content"))
+    else:
+        return None
+    return (role, text) if text.strip() else None
+
+
+def _sentences(text: str) -> list[str]:
+    clean = " ".join(str(text or "").replace("**", "").replace("`", "").split())
+    return [part.strip(" -") for part in re.split(r"(?<=[.!?])\s+", clean) if part.strip(" -")]
+
+
+def _story_request(messages: list[tuple[str, str]], ticket: dict) -> str:
+    for role, text in messages:
+        if role != "user":
+            continue
+        stripped = text.strip()
+        if stripped.startswith("<task-notification>") or stripped.startswith("<system-reminder>"):
+            continue
+        stripped = re.sub(r"^Work on\s+\S+\s*(?:\([^)]*\))?:\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"https?://\S+", "", stripped).strip()
+        if len(stripped) >= 12:
+            return _compact(stripped, 500)
+    return _compact(ticket.get("description") or ticket.get("summary") or ticket.get("key") or "Work on this ticket.", 500)
+
+
+def _pick_story_sentences(assistant_texts: list[str], pattern: re.Pattern, limit: int,
+                          exclude_last: bool = False) -> str:
+    pool = assistant_texts[:-1] if exclude_last and len(assistant_texts) > 1 else assistant_texts
+    chosen = []
+    seen = set()
+    for text in pool:
+        for sentence in _sentences(text):
+            normalized = sentence.lower()
+            if normalized in seen or sentence.endswith("?") or not pattern.search(sentence):
+                continue
+            seen.add(normalized)
+            chosen.append(sentence)
+    return _compact(" ".join(chosen[-limit:]), 900)
+
+
+def read_story(log_path: Path | None, provider: str, ticket: dict) -> dict:
+    """Human-readable story from the real request and assistant narrative.
+
+    No model call is made here: this preserves the agent's own explanation of
+    its decisions instead of generating a second, potentially fictional one.
+    """
+    fallback_request = _compact(ticket.get("description") or ticket.get("summary") or ticket.get("key") or "Work on this ticket.", 500)
+    if provider not in {"claude", "codex"} or not log_path or not log_path.exists():
+        return {"request": fallback_request, "rationale": fallback_request, "approach": "No implementation narrative has been recorded yet.", "outcome": "Work has not started in this session."}
+    stat = log_path.stat()
+    cache_key = (str(log_path), provider, stat.st_size, stat.st_mtime_ns, fallback_request)
+    cached = _STORY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    messages = []
+    with log_path.open("rb") as raw:
+        start = max(0, stat.st_size - MAX_TRANSCRIPT_BYTES)
+        raw.seek(start)
+        if start:
+            raw.readline()
+        for raw_line in raw:
+            try:
+                entry = json.loads(raw_line.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            message = _conversation_message(entry, provider)
+            if message:
+                messages.append(message)
+    assistant_texts = [text for role, text in messages if role == "assistant" and len(text.strip()) >= 20]
+    rationale_pattern = re.compile(r"\b(because|so that|so we|to avoid|rather than|means that|only means|reliable|safest|needed|requires?|in order to|therefore|which is why)\b", re.IGNORECASE)
+    approach_pattern = re.compile(r"\b(first|then|next|finally|checked|test(?:ed| passed)?|verified|added|changed|updated|created|restored|copied|implemented|fixed|submitt?\w*|ran|used|wrote|moved|deployed)\b", re.IGNORECASE)
+    request = _story_request(messages, ticket)
+    rationale = _pick_story_sentences(assistant_texts, rationale_pattern, 3)
+    approach = _pick_story_sentences(assistant_texts, approach_pattern, 4, exclude_last=True)
+    outcome = _compact(assistant_texts[-1].replace("**", "").replace("`", ""), 1200) if assistant_texts else "No outcome has been recorded yet."
+    result = {
+        "request": request,
+        "rationale": rationale or _compact(ticket.get("description") or ticket.get("summary") or request, 700),
+        "approach": approach or "The recorded tool flow below shows how the work was carried out.",
+        "outcome": outcome,
+    }
+    if len(_STORY_CACHE) >= 32:
+        _STORY_CACHE.clear()
+    _STORY_CACHE[cache_key] = result
+    return result
 
 
 def _decode_args(value: Any) -> dict:
