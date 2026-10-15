@@ -61,6 +61,22 @@ def _adf_to_text(node) -> str:
     return text
 
 
+def _text_to_adf(text: str) -> dict:
+    """Turn the board's plain-text comment editor into Jira API v3's ADF.
+
+    A paragraph per line preserves intentional line breaks without trying to
+    invent formatting the local editor does not expose.
+    """
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {"type": "paragraph", **({"content": [{"type": "text", "text": line}]} if line else {})}
+            for line in text.split("\n")
+        ],
+    }
+
+
 def _parse_issue_links(fields) -> list[dict]:
     """Jira's issuelinks: each entry names the relationship from ONE side only — the side
     this issue is on decides whether to read `outwardIssue`/type.outward ("blocks") or
@@ -354,6 +370,66 @@ def set_priority(key: str, priority_name: str):
         timeout=15,
     )
     resp.raise_for_status()
+
+
+def _normalize_comment(comment: dict) -> dict:
+    author = comment.get("author") or {}
+    return {
+        "id": str(comment.get("id") or ""),
+        "body": _adf_to_text(comment.get("body")),
+        "author": author.get("displayName") or "Jira user",
+        "createdAt": comment.get("created") or "",
+        "updatedAt": comment.get("updated") or "",
+        # Jira decides this from project permissions at write time. The REST
+        # response does not expose a reliable per-comment editable flag.
+        "editable": True,
+    }
+
+
+def get_comments(key: str) -> list[dict]:
+    """Read every comment currently visible to the configured Jira user."""
+    if not configured():
+        raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
+    c = get_config()
+    comments, start_at = [], 0
+    while True:
+        resp = requests.get(
+            f"{c['base_url']}/rest/api/3/issue/{key}/comment",
+            params={"startAt": start_at, "maxResults": 100},
+            auth=(c["email"], c["api_token"]), timeout=15,
+        )
+        resp.raise_for_status()
+        page = resp.json()
+        batch = page.get("comments") or []
+        comments.extend(_normalize_comment(item) for item in batch)
+        start_at += len(batch)
+        if not batch or start_at >= int(page.get("total", start_at)):
+            break
+    return comments
+
+
+def add_comment(key: str, text: str) -> dict:
+    if not configured():
+        raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
+    c = get_config()
+    resp = requests.post(
+        f"{c['base_url']}/rest/api/3/issue/{key}/comment",
+        json={"body": _text_to_adf(text)}, auth=(c["email"], c["api_token"]), timeout=15,
+    )
+    resp.raise_for_status()
+    return _normalize_comment(resp.json())
+
+
+def update_comment(key: str, comment_id: str, text: str) -> dict:
+    if not configured():
+        raise RuntimeError("Jira sync not configured — set it up on the Settings page, or copy .env.example to .env")
+    c = get_config()
+    resp = requests.put(
+        f"{c['base_url']}/rest/api/3/issue/{key}/comment/{comment_id}",
+        json={"body": _text_to_adf(text)}, auth=(c["email"], c["api_token"]), timeout=15,
+    )
+    resp.raise_for_status()
+    return _normalize_comment(resp.json())
 
 
 def set_assignee(key: str, account_id: str):

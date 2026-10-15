@@ -88,6 +88,7 @@ docs/          Static marketing page, deployed to Cloudflare Pages (unrelated to
 | `category_management.py` | Role presets, LLM-driven taxonomy review scans, write-ahead-logged category revisions. |
 | `memory_analysis.py` | Reads the memory markdown folder into a graph (see `MEMORY_FORMAT.md`); per-session memory-read counts for both Claude and Codex. |
 | `agent_activity.py` | Parses durable Claude/Codex JSONL transcripts into normalized command, file, memory and skill events for the terminal activity trail. |
+| `change_requests.py` | Discovers GitHub PRs/GitLab MRs from Claude's structured `pr-link` records or structured Claude/Codex output, then normalizes and deduplicates them. |
 | `cost_analysis.py` | Thin wrapper around the external `codeburn` CLI for per-session cost. |
 | `spend_ledger.py` | Durable per-workspace history of what each *closed* terminal session cost. |
 | `workflow_insights.py` | Pure-Python cost/caching/memory rollups over the spend ledger — no LLM call. |
@@ -234,6 +235,11 @@ Other things worth knowing before touching this code:
 - `GET /api/agent-activity/{key}?provider=...` reads the provider's durable JSONL
   transcript and returns normalized action/resource events. The 60/40 terminal
   activity trail uses this endpoint in both embedded and full-page terminal views.
+- `POST /api/tickets/{key}/change-requests/refresh` scans those same structured
+  transcripts (never the noisy raw PTY capture), materializes newly discovered
+  GitHub PR/GitLab MR links into the ticket's `changeRequests` array, and retains
+  multiple links per ticket. Ticket details poll it while expanded; the bigger
+  terminal tab renders the same live link chips. Manual add/remove remains a fallback.
 - A new Codex session gets an editable draft inserted once the composer footer
   appears in the PTY output (`terminal_draft.py`) — bracketed-paste bytes with no
   trailing newline, so **only the user can submit it**, never auto-submitted.
@@ -246,6 +252,7 @@ Other things worth knowing before touching this code:
 
 - **`db.json`**: `jiraTickets` (keyed by ticket key — summary, description, status,
   priority, reporter, `assigneeName`/`assigneeAccountId`, categories, content tags,
+  `changeRequests` (normalized PR/MR records; the legacy `mrLink` is migrated lazily),
   session ids, notes, `source` for Notion rows), `people`, `teamOptions`,
   `hiddenAssignees` (Jira account ids).
 - **`categories.json`**: a top-level **array**, not an object — `{id, name, status,
@@ -327,12 +334,12 @@ real per-workspace file is absent (`content.py`'s `_read_json_with_fallback`).
 npm --prefix tests/ui ci && npm --prefix tests/ui test
 ```
 
-- Python: 19 files, 241 tests. No `pytest`, no `tests/__init__.py` — every file
+- Python: 20 files, 253 tests. No `pytest`, no `tests/__init__.py` — every file
   does its own `sys.path.insert(0, <repo>/server)`. `tests/workspace_fixture.py`'s
   `TempWorkspaces` is the shared fixture: it patches `workspaces.DATA_ROOT` to a
   temp dir laid out like a real install and enters `workspaces.use(slug)`, so a
   test never touches the real `data/` tree.
-- JS: 8 `.mjs` files in `tests/ui/`, run as plain `node` scripts (no test runner)
+- JS: 10 `.mjs` files in `tests/ui/`, run as plain `node` scripts (no test runner)
   against a `linkedom`-provided DOM, chained with `&&` so the first failure stops
   the run. ~300 raw `assert` calls total.
 - CI (`.github/workflows/ci.yml` + `dco.yml`/`codeql.yml`/`scorecard.yml`): backend
@@ -386,4 +393,11 @@ followed it. PR #48 added the Jira-style status board and full-width layouts.
 The latest work replaces the unreliable running badge with a true PTY-activity
 dot, removes the redundant token bar, fixes the initial empty-board refresh race,
 and adds the optional 60/40 graphical activity trail beside embedded and expanded
-terminals.
+terminals. Ticket details now also load live Jira/Notion comments, add comments
+to the source tracker, and edit them inline; Notion edit controls only appear for
+comments created by this integration, matching Notion's API restriction. Local
+Activity Log notes remain deliberately separate from tracker comments. The
+terminal controls now also expose a Manager summary beside Agent trail. Its
+story-first view extracts the real request, rationale, implementation narrative,
+and outcome from the durable Claude/Codex conversation; structured transcript
+calls remain underneath as supporting flow, changed-object, and knowledge evidence.
