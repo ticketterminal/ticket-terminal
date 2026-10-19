@@ -18,7 +18,7 @@ Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:t
 globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true})});
 
 const {state}=await import(root+'/public/state.js');
-const {buildLaneItems,renderLaneItems,renderStatusBoard,resetStatusBoardColumns}=await import(root+'/public/lanes.js');
+const {buildLaneItems,renderLaneItems,renderStatusBoard,renderWorkflowView,resetStatusBoardColumns}=await import(root+'/public/lanes.js');
 const {renderSearch,searchForTicket}=await import(root+'/public/filters.js');
 const {renderTicketRow}=await import(root+'/public/ticket-row.js');
 const {applyScrollCap}=await import(root+'/public/dom-utils.js');
@@ -155,6 +155,30 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
   state.selectedStatuses.delete('Backlog');
   renderStatusBoard();
   assert.equal(board.querySelector('[data-status="Backlog"]'),null,'the status filter hides its whole board column');
+
+  state.selectedStatuses=new Set(['Backlog','Selected for Development','In Progress','Awaiting approval']);
+  state.lastTicketDocs=[
+    doc('OPS-50',{jiraStatus:'Backlog',jiraPriority:'Low'}),
+    doc('OPS-51',{jiraStatus:'Selected for Development',jiraPriority:'Low',issueType:'Epic'}),
+    doc('OPS-55',{jiraStatus:'Awaiting approval',jiraPriority:'High',parentKey:'OPS-51'}),
+    doc('OPS-52',{jiraStatus:'In Progress',jiraPriority:'Low'}),
+    doc('OPS-53',{jiraStatus:'Awaiting approval',jiraPriority:'Low'}),
+  ];
+  state.flatSortMode='status';
+  state.showNested=false;
+  renderWorkflowView();
+  const workflow=document.getElementById('workflowView');
+  const workflowTickets=[...workflow.querySelectorAll('#workflowList > .ticketrow')];
+  assert.equal(workflow.querySelector('.workflowgroup'),null,'workflow is one continuous list, not grouped status sections');
+  assert.deepEqual(workflowTickets.map(n=>n.dataset.ticketKey),['OPS-50','OPS-51','OPS-52','OPS-53'],'status sorting follows workflow progression');
+  assert.deepEqual(workflowTickets.map(n=>n.style.getPropertyValue('--workflow-indent')),['0px','28px','56px','84px'],'each ticket is tabbed according to its own status');
+  const epicChildren=workflow.querySelector('[data-ticket-key="OPS-51"] + .epicchildrenwrap');
+  assert(epicChildren.querySelector('[data-ticket-key="OPS-55"]'),'workflow always groups a subtask beneath its epic even when the global setting is flat');
+  assert.equal(epicChildren.style.getPropertyValue('--workflow-parent-indent'),'28px','the subtask group follows its epic workflow offset');
+  const workflowTicket=workflow.querySelector('[data-ticket-key="OPS-52"]');
+  workflowTicket.querySelector('.rowtri').click();
+  assert.equal(workflowTicket.querySelector('.rowtri').getAttribute('aria-expanded'),'true','workflow tickets retain the normal expandable details and terminal');
+  workflowTicket.querySelector('.rowtri').click(); // stop the expanded panel's polling timers
 }
 
 // --- a ticket row's "Linked tickets" section --------------------------------------------

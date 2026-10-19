@@ -64,6 +64,7 @@
         <div class="viewtoggle">
           <button type="button" class="viewbtn" id="viewGroupedBtn">Grouped</button>
           <button type="button" class="viewbtn" id="viewFlatBtn">All tickets</button>
+          <button type="button" class="viewbtn" id="viewWorkflowBtn" title="Show one sortable list with tickets indented by status">Workflow</button>
           <button type="button" class="viewbtn" id="viewStatusBtn" title="Show a Jira-style board with one column per status">Status board</button>
         </div>
         <span class="searchhint" id="searchHint"></span>
@@ -108,6 +109,18 @@
         <div class="lanebody" id="allTicketsList"></div>
       </div>
       <div class="statusboard" id="statusBoardView" hidden aria-label="Tickets by status"></div>
+      <div class="lane workflowview" id="workflowView" hidden aria-label="Tickets indented by workflow status">
+        <div class="lanehead" style="cursor:default;">
+          <h3>Workflow</h3>
+          <span class="lanecount" id="workflowCount">0 tickets</span>
+          <select id="workflowSortSel" class="lanesort" style="margin-left:auto;">
+            <option value="status">Sort: status</option>
+            <option value="date">Sort: open date (newest)</option>
+            <option value="priority">Sort: priority</option>
+          </select>
+        </div>
+        <div class="lanebody workflowlist" id="workflowList"></div>
+      </div>
       <div class="lane" id="searchResults" hidden>
         <div class="lanehead" style="cursor:default;">
           <h3>Search results</h3>

@@ -1,6 +1,7 @@
 import { apiJson } from "./api.js";
 import { el } from "./dom-utils.js";
 import { routeHash } from "./workspaces.js";
+import { setAgentPanelMode } from "./board-state.js";
 
 const ICONS = {
   command: "›_", memory: "◇", skill: "✦", read: "↗", write: "✎",
@@ -113,18 +114,37 @@ export function renderManagerSummary(host, summary){
   host.replaceChildren();
   summary = summary || {};
   const wrap = el("div", "managersummary");
-  const story = summary.story || {
+  const brief = summary.brief;
+  const story = brief ? {
+    request:brief.requestedChange,
+    architecture:brief.architecture,
+    rationale:brief.rationale,
+    approach:brief.implementation,
+    rollout:brief.rollout,
+    outcome:brief.status,
+  } : summary.story ? {
+    request:summary.story.request,
+    architecture:"A synthesized architecture view will appear when the manager brief is ready.",
+    rationale:summary.story.rationale,
+    approach:summary.story.approach,
+    rollout:"No rollout path has been synthesized yet.",
+    outcome:summary.story.outcome,
+  } : {
     request:summary.why || "The ticket does not include a request.",
+    architecture:"No system context has been recorded yet.",
     rationale:summary.why || "No rationale has been recorded yet.",
-    approach:"The recorded flow below shows how the work was carried out.",
+    approach:"No implementation summary has been recorded yet.",
+    rollout:"No rollout path has been recorded yet.",
     outcome:summary.headline || "No outcome has been recorded yet.",
   };
   const narrative = el("article", "managerstory");
   [
     ["The request",story.request],
+    ["Architecture and scope",story.architecture],
     ["Why this approach",story.rationale],
-    ["How it was carried out",story.approach],
-    ["Outcome",story.outcome],
+    ["What changes where",story.approach],
+    ["Rollout and safety",story.rollout],
+    ["Current state",story.outcome],
   ].forEach(([label,copy]) => {
     const section = el("section", "managerstory-section");
     section.appendChild(el("span", "managersummary-label", label));
@@ -133,12 +153,9 @@ export function renderManagerSummary(host, summary){
   });
   wrap.appendChild(narrative);
 
-  const facts = Array.isArray(summary.facts) ? summary.facts : [];
-  if (facts.length){
-    const factRow = el("div", "managersummary-facts");
-    facts.forEach(fact => factRow.appendChild(el("span", null, fact)));
-    wrap.appendChild(factRow);
-  }
+  const evidence = document.createElement("details");
+  evidence.className = "managersummary-evidence";
+  evidence.appendChild(el("summary", "managersummary-label", "Supporting agent evidence"));
 
   const flow = Array.isArray(summary.flow) ? summary.flow : [];
   const flowSection = el("section", "managersummary-section");
@@ -157,7 +174,7 @@ export function renderManagerSummary(host, summary){
     });
     flowSection.appendChild(flowGraph);
   }
-  wrap.appendChild(flowSection);
+  evidence.appendChild(flowSection);
 
   const objects = Array.isArray(summary.objects) ? summary.objects : [];
   const objectsSection = el("section", "managersummary-section");
@@ -176,7 +193,7 @@ export function renderManagerSummary(host, summary){
     });
     objectsSection.appendChild(grid);
   }
-  wrap.appendChild(objectsSection);
+  evidence.appendChild(objectsSection);
 
   const knowledge = Array.isArray(summary.knowledge) ? summary.knowledge : [];
   if (knowledge.length){
@@ -185,8 +202,10 @@ export function renderManagerSummary(host, summary){
     const chips = el("div", "managerknowledge");
     knowledge.forEach(resource => chips.appendChild(resourceChip(resource)));
     knowledgeSection.appendChild(chips);
-    wrap.appendChild(knowledgeSection);
+    evidence.appendChild(knowledgeSection);
   }
+
+  wrap.appendChild(evidence);
 
   host.appendChild(wrap);
 }
@@ -228,6 +247,10 @@ export function createAgentTrailView(key, provider, ticket={}){
   let disposed = false;
   let requestNumber = 0;
   let lastSignature = null;
+  let lastActivitySummary = summarizeManager([], ticket);
+  let managerBrief = null;
+  let managerLoading = false;
+  let managerRequestNumber = 0;
   let mode = "trail";
   async function refresh(){
     const ownRequest = ++requestNumber;
@@ -235,14 +258,36 @@ export function createAgentTrailView(key, provider, ticket={}){
       const response = await apiJson("/api/agent-activity/" + encodeURIComponent(key) + "?provider=" + encodeURIComponent(provider));
       const events = response.events || [];
       const summary = response.summary || summarizeManager(events, ticket);
+      lastActivitySummary = summary;
       const signature = JSON.stringify([events.map(event => [event.id, event.kind, event.title, event.detail]), summary]);
       if (!disposed && ownRequest === requestNumber && signature !== lastSignature){
         lastSignature = signature;
         renderAgentTrail(feed, events);
-        renderManagerSummary(summaryFeed, summary);
+        if (!managerLoading) renderManagerSummary(summaryFeed, managerBrief ? {...summary, brief:managerBrief} : summary);
       }
     } catch (error) {
       if (!disposed && ownRequest === requestNumber) feed.replaceChildren(el("div", "agenttrail-empty", "Couldn't load the activity history."));
+    }
+  }
+  async function refreshManager(force=false){
+    const ownRequest = ++managerRequestNumber;
+    managerLoading = true;
+    summaryFeed.replaceChildren(el("div", "agenttrail-empty", "Building an architecture-level manager brief…"));
+    try {
+      const suffix = force ? "&refresh=true" : "";
+      const response = await apiJson("/api/manager-summary/" + encodeURIComponent(key) + "?provider=" + encodeURIComponent(provider) + suffix, {method:"POST"});
+      if (!response.ok) throw new Error(response.error || "summary generation failed");
+      if (!disposed && ownRequest === managerRequestNumber){
+        managerBrief = response.brief;
+        managerLoading = false;
+        renderManagerSummary(summaryFeed, {...lastActivitySummary, brief:managerBrief});
+      }
+    } catch (error) {
+      if (!disposed && ownRequest === managerRequestNumber){
+        managerLoading = false;
+        renderManagerSummary(summaryFeed, lastActivitySummary);
+        summaryFeed.prepend(el("div", "agenttrail-empty", "Couldn't synthesize the manager brief. Showing transcript evidence instead."));
+      }
     }
   }
   function paintMode(){
@@ -260,10 +305,12 @@ export function createAgentTrailView(key, provider, ticket={}){
     trail.hidden = !open;
     shell.classList.toggle("agenttrail-open", open);
     paintMode();
+    setAgentPanelMode(key, provider, open ? nextMode : null);
     clearInterval(timer);
     timer = null;
     if (open){
       refresh();
+      if (nextMode === "summary") refreshManager();
       timer = setInterval(refresh, 1500);
     }
     const notifyResize = () => window.dispatchEvent(new Event("resize"));
@@ -293,5 +340,5 @@ export function createAgentTrailView(key, provider, ticket={}){
     shell.disposeAgentTrail();
     terminal.disposeTicketTerminal?.();
   };
-  return { shell, terminal, trail, feed, summaryFeed, toggle, summaryToggle, refresh, setOpen, activate };
+  return { shell, terminal, trail, feed, summaryFeed, toggle, summaryToggle, refresh, refreshManager, setOpen, activate };
 }

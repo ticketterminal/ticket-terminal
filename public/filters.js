@@ -3,14 +3,19 @@ import { state } from "./state.js";
 import { el, applyScrollCap } from "./dom-utils.js";
 import { teamColor, teamForReporter } from "./people.js";
 import { compareByPriority, renderFlatList, laneTicketLists, lanesEl, renderTickets, buildLaneItems, renderLaneItems, resetStatusBoardColumns } from "./lanes.js";
+import { saveBoardState } from "./board-state.js";
 
 const allTicketsEl = document.getElementById("allTicketsView");
 const allTicketsListEl = document.getElementById("allTicketsList");
 const flatSortSelEl = document.getElementById("flatSortSel");
+const workflowSortSelEl = document.getElementById("workflowSortSel");
 const viewGroupedBtn = document.getElementById("viewGroupedBtn");
 const viewFlatBtn = document.getElementById("viewFlatBtn");
+const viewWorkflowBtn = document.getElementById("viewWorkflowBtn");
 const viewStatusBtn = document.getElementById("viewStatusBtn");
 const statusBoardEl = document.getElementById("statusBoardView");
+const workflowEl = document.getElementById("workflowView");
+const workflowListEl = document.getElementById("workflowList");
 const inProgressBtn = document.getElementById("inProgressBtn");
 const nestingToggleBtn = document.getElementById("nestingToggleBtn");
 const searchResultsEl = document.getElementById("searchResults");
@@ -319,7 +324,6 @@ export function renderFilterOptions(){
   syncSelectedAssignees();
   renderAssigneeFilterChips();
 
-  const prevPerson = filterPersonSel.value;
   const names = new Set();
   state.lastTicketDocs.forEach(d => { const r = (d.data()||{}).reporter; if (r) names.add(r); });
   filterPersonSel.innerHTML = '<option value="">All people</option>';
@@ -328,7 +332,12 @@ export function renderFilterOptions(){
     o.value = n; o.textContent = n;
     filterPersonSel.appendChild(o);
   });
-  filterPersonSel.value = names.has(prevPerson) ? prevPerson : "";
+  if (state.filterPerson && !names.has(state.filterPerson)) state.filterPerson = "";
+  filterPersonSel.value = state.filterPerson;
+  inProgressBtn.classList.toggle("active", state.filterInProgress);
+  nestingToggleBtn.textContent = state.showNested ? "Show flat" : "Show nested";
+  flatSortSelEl.value = state.flatSortMode;
+  workflowSortSelEl.value = state.flatSortMode;
 }
 
 function matchesQuery(doc, q){
@@ -391,7 +400,7 @@ export function searchForTicket(key){
   searchInputEl.scrollIntoView({behavior: "smooth", block: "center"});
 }
 
-// Which of grouped lanes / all-tickets / status-board / search-results is visible right now — a
+// Which of grouped lanes / all-tickets / stepped workflow / status-board / search-results is visible right now — a
 // search query always wins; otherwise it's whichever viewMode is set.
 export function updateViewVisibility(){
   const searching = !!(searchInputEl.value || "").trim();
@@ -399,9 +408,11 @@ export function updateViewVisibility(){
   lanesEl.hidden = searching || state.viewMode !== "grouped";
   document.getElementById("categoryToolbar").hidden = lanesEl.hidden;
   allTicketsEl.hidden = searching || state.viewMode !== "flat";
+  workflowEl.hidden = searching || state.viewMode !== "workflow";
   statusBoardEl.hidden = searching || state.viewMode !== "status";
   viewGroupedBtn.classList.toggle("active", state.viewMode === "grouped");
   viewFlatBtn.classList.toggle("active", state.viewMode === "flat");
+  viewWorkflowBtn.classList.toggle("active", state.viewMode === "workflow");
   viewStatusBtn.classList.toggle("active", state.viewMode === "status");
   // applyScrollCap measures real offsetTop/offsetHeight, which read as 0 on a
   // display:none container — so a lane/list measured while its view was
@@ -417,6 +428,9 @@ export function updateViewVisibility(){
   if (!allTicketsEl.hidden){
     applyScrollCap(allTicketsListEl, 10);
   }
+  if (!workflowEl.hidden){
+    applyScrollCap(workflowListEl, 10);
+  }
   if (!searchResultsEl.hidden){
     applyScrollCap(searchListEl, 10);
   }
@@ -425,7 +439,10 @@ export function updateViewVisibility(){
 function setViewMode(mode){
   state.viewMode = mode;
   try { localStorage.setItem("wmp.viewMode", mode); } catch (e) {}
-  updateViewVisibility();
+  saveBoardState();
+  // Rebuild once so a saved expanded ticket/terminal moves to the newly
+  // active copy instead of remaining mounted in the now-hidden view.
+  renderTickets(state.lastTicketDocs, state.lastDbRef);
 }
 
 export function wireFiltersUI(){
@@ -479,6 +496,7 @@ export function wireFiltersUI(){
 
   viewGroupedBtn.addEventListener("click", () => setViewMode("grouped"));
   viewFlatBtn.addEventListener("click", () => setViewMode("flat"));
+  viewWorkflowBtn.addEventListener("click", () => setViewMode("workflow"));
   viewStatusBtn.addEventListener("click", () => {
     resetStatusBoardColumns();
     setViewMode("status");
@@ -490,13 +508,21 @@ export function wireFiltersUI(){
   });
 
   flatSortSelEl.value = state.flatSortMode;
-  flatSortSelEl.addEventListener("change", () => {
-    state.flatSortMode = flatSortSelEl.value;
+  workflowSortSelEl.value = state.flatSortMode;
+  const changeTicketSort = value => {
+    state.flatSortMode = value;
     try { localStorage.setItem("wmp.flatSort", state.flatSortMode); } catch (e) {}
-    renderFlatList();
-  });
+    saveBoardState();
+    renderTickets(state.lastTicketDocs, state.lastDbRef);
+  };
+  flatSortSelEl.addEventListener("change", () => changeTicketSort(flatSortSelEl.value));
+  workflowSortSelEl.addEventListener("change", () => changeTicketSort(workflowSortSelEl.value));
 
-  searchInputEl.addEventListener("input", renderSearch);
+  searchInputEl.addEventListener("input", () => {
+    state.searchQuery = searchInputEl.value;
+    saveBoardState();
+    renderSearch();
+  });
 
   // Same failure mode updateViewVisibility() already guards against above
   // (applyScrollCap freezing a lane at a too-small max-height because it
