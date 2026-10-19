@@ -10,7 +10,14 @@ Object.assign(globalThis,{
   localStorage:{getItem:()=>null,setItem:()=>{}},
   location:{hash:'#/'},
   Event:window.Event,
-  fetch:async url=>{calls.push(url);return {ok:true,status:200,json:async()=>({ok:true,events:[],summary:{
+  fetch:async url=>{calls.push(url);return {ok:true,status:200,json:async()=>url.startsWith('/api/manager-summary/') ? ({ok:true,brief:{
+    requestedChange:'Allow the service role to invoke the alert Lambda.',
+    architecture:'The geo-notifications service runs in Kubernetes and receives AWS permissions through a Terraform IAM module.',
+    rationale:'A narrow invoke grant preserves least privilege and avoids changing the Lambda itself.',
+    implementation:'The service role policy template gains permission for the publish-generic-alerts function.',
+    rollout:'Promote through dev, staging, and production after the dev plan is clean.',
+    status:'The code is ready, but deployment waits for the prerequisite IaC change to merge.',
+  }}) : ({ok:true,events:[],summary:{
     headline:'Work recorded toward “Add comments”.',why:'Make ticket discussion visible.',
     facts:['Changed 2 named objects'],
     story:{request:'Add a manager-readable summary.',rationale:'The raw trail is too tactical for status reporting.',approach:'The agent grouped transcript evidence into a narrative and kept the detailed flow below it.',outcome:'Managers can now understand the work without reading terminal actions.'},
@@ -57,9 +64,14 @@ assert.equal(calls[0],'/api/agent-activity/OPS-1?provider=codex&w=ticket-termina
 view.summaryToggle.click();
 await new Promise(resolve=>setTimeout(resolve,0));
 assert.equal(view.summaryFeed.hidden,false,'manager summary opens in the same 60/40 evidence panel');
-assert.deepEqual([...view.summaryFeed.querySelectorAll('.managerstory-section .managersummary-label')].map(node=>node.textContent),['The request','Why this approach','How it was carried out','Outcome']);
-assert.equal(view.summaryFeed.querySelectorAll('.managerstory-section p')[1].textContent,'The raw trail is too tactical for status reporting.','the summary leads with human narrative, not an action grocery list');
-assert.equal(view.summaryFeed.querySelectorAll('.managerflow-node').length,2,'the manager view renders a graphical action flow');
+assert.equal(calls.filter(url=>url.startsWith('/api/manager-summary/')).length,1,'the expensive synthesis runs once when manager summary opens');
+assert(calls.includes('/api/manager-summary/OPS-1?provider=codex&w=ticket-terminal'),'manager synthesis retains workspace isolation');
+assert.deepEqual([...view.summaryFeed.querySelectorAll('.managerstory-section .managersummary-label')].map(node=>node.textContent),['The request','Architecture and scope','Why this approach','What changes where','Rollout and safety','Current state']);
+assert.equal(view.summaryFeed.querySelectorAll('.managerstory-section p')[1].textContent,'The geo-notifications service runs in Kubernetes and receives AWS permissions through a Terraform IAM module.','the summary leads with architecture rather than an action grocery list');
+assert.equal(view.summaryFeed.querySelectorAll('.managerflow-node').length,2,'the manager view retains a collapsed graphical evidence flow');
+assert.equal(view.summaryFeed.querySelector('.managersummary-evidence').hasAttribute('open'),false,'supporting action evidence is collapsed at a glance');
+await view.refresh();
+assert.equal(view.summaryFeed.querySelectorAll('.managerstory-section p')[1].textContent,'The geo-notifications service runs in Kubernetes and receives AWS permissions through a Terraform IAM module.','activity polling does not overwrite the synthesized brief');
 assert.equal(view.summaryFeed.querySelector('.managerobject-copy strong').textContent,'app.js','changed objects are named');
 view.summaryFeed.querySelector('button.agenttrail-resource').click();
 assert.equal(location.hash,'#/w/ticket-terminal/memory/jira-comments','manager knowledge chips retain workspace-scoped memory-graph navigation');

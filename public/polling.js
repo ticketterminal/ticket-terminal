@@ -167,3 +167,4 @@ export function stopLiveStatsPoll(){
   clearInterval(liveStatsPollTimer);
   liveStatsPollTimer = null;
 }
+state.stopLiveStatsPoll = stopLiveStatsPoll;
