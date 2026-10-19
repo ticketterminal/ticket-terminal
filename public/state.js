@@ -106,9 +106,9 @@ export const state = {
   // actually exited, so they keep running and reconnect when you come back.
   openTerminals: new Set(),
 
-  // Grouped, flat "All tickets", and Jira-style status-board views + per-lane sort mode are per-viewer display
+  // Grouped, flat "All tickets", stepped workflow, and Jira-style status-board views + per-lane sort mode are per-viewer display
   // preferences (localStorage), not shared server state.
-  viewMode: ["grouped", "flat", "status"].includes(localStorage.getItem("wmp.viewMode")) ? localStorage.getItem("wmp.viewMode") : "grouped",
+  viewMode: ["grouped", "flat", "workflow", "status"].includes(localStorage.getItem("wmp.viewMode")) ? localStorage.getItem("wmp.viewMode") : "grouped",
   flatSortMode: ["status", "priority", "date"].includes(localStorage.getItem("wmp.flatSort")) ? localStorage.getItem("wmp.flatSort") : "date",
   // Whether a subtask nests inside its parent's box (lanes.js's buildLaneItems) or every
   // ticket renders as a flat sibling, same as before that grouping existed.
@@ -126,6 +126,14 @@ export const state = {
   knownAssigneeNames: new Set(),
   filterPerson: "",
   filterInProgress: false,
+  searchQuery: "",
+
+  // Workspace-scoped per-viewer state, hydrated from board-state.js before
+  // each workspace's first render.
+  expandedTickets: new Set(),
+  terminalPanels: {},
+  agentPanelModes: {},
+  stopLiveStatsPoll: null,
 
   // Team roster + person->team map — real data from data/db.json.
   teamOptions: [],

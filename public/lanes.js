@@ -6,6 +6,7 @@ import { renderTicketRow } from "./ticket-row.js";
 import { passesFilters, isDone, renderFilterOptions, renderSprintOptions, normalizeSprintFilter, renderSearch, allStatusNames, statusColor } from "./filters.js";
 import { renderPeople } from "./people.js";
 import { routeHash } from "./workspaces.js";
+import { restoreBoardState, saveBoardState } from "./board-state.js";
 
 export const STATUS_LABEL = {covered:"Covered", partial:"Partial", gap:"No runbook"};
 
@@ -378,11 +379,11 @@ export function buildCategoryUI(){
    category so the same epic/parent-child grouping logic serves both the
    per-category lanes and the flat "all tickets" view (which isn't scoped to
    one category, so there's no cat.id to look a sort mode up by). */
-export function buildLaneItems(forCat, cmp){
+export function buildLaneItems(forCat, cmp, forceNested = false){
   const items = [];
   // "Show flat" reverts to exactly how every ticket rendered before this grouping existed —
   // every doc a plain sibling row, parentKey ignored entirely.
-  if (!state.showNested){
+  if (!state.showNested && !forceNested){
     forCat.forEach(d => items.push({type:"ticket", doc:d}));
     items.sort((a,b) => cmp(a.doc, b.doc));
     return items;
@@ -456,6 +457,17 @@ function updateDemoNotice(){
 }
 
 export function renderTickets(allDocs, dbRef){
+  // Filter/view changes can rebuild the board while a terminal is connected.
+  // Close only the browser sockets before replacing their DOM; the processes
+  // survive and the saved panels reconnect after this render.
+  if (state.openTerminals.size){
+    [...state.openTerminals].forEach(panel => {
+      try { panel.disposeTicketTerminal?.(); } catch (e) { /* already closed */ }
+    });
+    state.openTerminals.clear();
+    state.liveTerminalCount = 0;
+    state.stopLiveStatsPoll?.();
+  }
   state.lastTicketDocs = allDocs;
   state.lastDbRef = dbRef;
   updateDemoNotice();
@@ -492,8 +504,15 @@ export function renderTickets(allDocs, dbRef){
   renderSprintOptions();
   renderFlatList();
   renderStatusBoard();
+  // The workflow repeats every ticket in a fourth layout and can be large.
+  // Build it only while selected; setViewMode() already re-renders when the
+  // user switches views, so this does not change the interaction.
+  if (state.viewMode === "workflow") renderWorkflowView();
+  else workflowListEl.replaceChildren();
   renderSearch();
   renderPeople();
+  saveBoardState();
+  restoreBoardState();
 }
 
 const allTicketsCountEl = document.getElementById("allTicketsCount");
@@ -511,6 +530,9 @@ export function renderFlatList(){
 }
 
 const statusBoardEl = document.getElementById("statusBoardView");
+const workflowEl = document.getElementById("workflowView");
+const workflowListEl = document.getElementById("workflowList");
+const workflowCountEl = document.getElementById("workflowCount");
 const STATUS_BOARD_ORDER = [
   "backlog", "open", "to do", "todo", "selected for development", "in progress",
   "waiting approval", "waiting for approval", "awaiting approval", "done", "cancelled", "canceled",
@@ -569,4 +591,43 @@ export function renderStatusBoard(){
   if (!statuses.length){
     statusBoardEl.appendChild(el("div", "statusboardempty", "No statuses selected."));
   }
+}
+
+function workflowStage(status){
+  const normalized = (status || "").trim().toLowerCase();
+  if (["selected for development"].includes(normalized)) return 1;
+  if (["in progress"].includes(normalized)) return 2;
+  if (["waiting approval", "waiting for approval", "awaiting approval"].includes(normalized)) return 3;
+  if (normalized === "done") return 4;
+  if (["cancelled", "canceled"].includes(normalized)) return 5;
+  return 0; // backlog/open/to do and unknown statuses stay flush left
+}
+
+function compareByWorkflowStatus(a, b){
+  const da = a.data() || {}, db2 = b.data() || {};
+  return workflowStage(da.jiraStatus) - workflowStage(db2.jiraStatus) || compareByPriority(a, b);
+}
+
+// A single continuous ticket list, with workflow state expressed by each
+// ticket's left offset rather than by status sections. This keeps date and
+// priority sorting meaningful even when adjacent tickets have different states.
+export function renderWorkflowView(){
+  const docs = state.lastTicketDocs.filter(doc => !isDone(doc) && passesFilters(doc));
+  const cmp = state.flatSortMode === "status" ? compareByWorkflowStatus : state.flatSortMode === "priority" ? compareByPriority : compareByDate;
+  // Workflow always preserves the parent/sub-task relationship: the parent
+  // carries the status offset and its children travel together beneath it,
+  // independent of the board-wide nested/flat toggle.
+  const items = buildLaneItems(docs, cmp, true);
+  renderLaneItems(workflowListEl, items, state.lastDbRef, cmp, "No open tickets.");
+  applyScrollCap(workflowListEl, 10);
+  workflowCountEl.textContent = docs.length + (docs.length === 1 ? " ticket" : " tickets");
+  const byKey = new Map(docs.map(doc => [doc.id, doc]));
+  workflowListEl.querySelectorAll(":scope > .ticketrow").forEach(row => {
+    const data = byKey.get(row.dataset.ticketKey)?.data() || {};
+    row.style.setProperty("--workflow-indent", Math.min(workflowStage(data.jiraStatus) * 28, 140) + "px");
+  });
+  workflowListEl.querySelectorAll(":scope > .epicchildrenwrap").forEach(group => {
+    const parentRow = group.previousElementSibling;
+    group.style.setProperty("--workflow-parent-indent", parentRow?.style.getPropertyValue("--workflow-indent") || "0px");
+  });
 }

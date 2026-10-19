@@ -6,6 +6,7 @@ import { apiJson, withWorkspace } from "./api.js";
 import { startAgentActivityPoll, startLiveStatsPoll, stopLiveStatsPoll } from "./polling.js";
 import { el, categoryLabel } from "./dom-utils.js";
 import { createAgentTrailView } from "./agent-trail.js";
+import { getAgentPanelMode, getTerminalPanel, setTerminalPanel, setTicketExpanded } from "./board-state.js";
 
 // Wires a ticket row's expand button so the embedded Claude terminal starts
 // automatically the first time the row is expanded — no separate button.
@@ -34,6 +35,8 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     const button = document.createElement("button");
     button.type = "button";
     button.className = "refreshbtn";
+    button.dataset.terminalProvider = provider;
+    button.dataset.terminalStarted = "false";
     button.textContent = "Open " + (provider === "codex" ? "Codex" : "Claude");
     controls.appendChild(button);
     view.toggle.hidden = true;
@@ -55,6 +58,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
         if (!available.providers.includes(provider)) throw new Error(provider + " executable was not found. Set WMP_" + provider.toUpperCase() + "_BIN to its full path and restart the server.");
       } catch (error) {
         panel.hidden = true;
+        setTerminalPanel(data.key, provider, null);
         alert("Cannot open session. " + error.message);
         return;
       } finally {
@@ -65,11 +69,17 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
       view.summaryToggle.hidden = false;
       view.activate();
       started = true;
+      button.dataset.terminalStarted = "true";
       state.openTerminals.add(panel);
       button.textContent = "Show / hide " + (provider === "codex" ? "Codex" : "Claude");
       state.liveTerminalCount++;
       startAgentActivityPoll();
       startLiveStatsPoll();
+      const savedPanel = getTerminalPanel(data.key, provider);
+      setTerminalPanel(data.key, provider, {visible:savedPanel ? savedPanel.visible : !panel.hidden});
+      panel.hidden = savedPanel ? !savedPanel.visible : panel.hidden;
+      const savedAgentMode = getAgentPanelMode(data.key, provider);
+      if (savedAgentMode) view.setOpen(true, savedAgentMode);
       const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
       const promptText = "Work on " + data.key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
       window.openTicketTerminal(view.terminal, doc.id, promptText, {
@@ -79,6 +89,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
         workspace: state.workspaceSlug,
         onClose: () => {
           started = false;
+          button.dataset.terminalStarted = "false";
           button.textContent = "Reopen " + (provider === "codex" ? "Codex" : "Claude");
           view.shell.disposeAgentTrail?.();
           releaseTerminal(panel);
@@ -86,8 +97,13 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
       });
     }
     button.addEventListener("click", () => {
-      panel.hidden = !panel.hidden;
-      if (started) return;
+      const remembered = getTerminalPanel(data.key, provider);
+      panel.hidden = remembered && !started ? !remembered.visible : !panel.hidden;
+      if (started){
+        setTerminalPanel(data.key, provider, {visible:!panel.hidden});
+        return;
+      }
+      setTerminalPanel(data.key, provider, {visible:!panel.hidden});
       openEmbedded();
     });
     const stop = document.createElement("button");
@@ -95,6 +111,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     stop.className = "refreshbtn";
     stop.textContent = "Stop " + (provider === "codex" ? "Codex" : "Claude");
     stop.addEventListener("click", async () => {
+      setTerminalPanel(data.key, provider, null);
       const key = provider === "codex" ? "codex:" + data.key : data.key;
       const result = await apiJson("/api/running-processes/" + encodeURIComponent(key) + "/kill", {method:"POST"});
       if (!result.ok) alert(result.error || "Could not stop session");
@@ -111,6 +128,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     biggerTab.className = "refreshbtn";
     biggerTab.textContent = "Open in bigger tab";
     biggerTab.addEventListener("click", () => {
+      setTerminalPanel(data.key, provider, null);
       if (started){
         try { panel.disposeTicketTerminal?.(); } catch (e) { /* already gone */ }
         started = false;
@@ -149,6 +167,7 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
       try {
         const result = await apiJson("/api/tickets/" + encodeURIComponent(data.key) + "/handoff?provider=" + provider, {method:"POST"});
         if (!result.ok){ alert(result.error || "Could not hand off session"); return; }
+        setTerminalPanel(data.key, provider, null);
         if (result.url) window.location.href = result.url;
       } catch (error) {
         alert("Could not hand off session: " + error.message);
@@ -166,9 +185,14 @@ export function attachTerminal(termHost, expandBtn, expandPanel, doc, data){
     expandBtn.textContent = expanded ? "▾" : "▸";
     expandBtn.setAttribute("aria-expanded", String(expanded));
     expandBtn.setAttribute("aria-label", expanded ? "Collapse ticket details" : "Expand ticket details");
+    setTicketExpanded(data.key, expanded);
     if (expanded){
       expandPanel.changeRequestView?.start();
       expandPanel.ticketCommentsView?.start();
+      [...controls.querySelectorAll("button[data-terminal-provider]")].forEach(button => {
+        if (button.dataset.terminalStarted === "true") return;
+        if (getTerminalPanel(data.key, button.dataset.terminalProvider)) button.click();
+      });
     } else {
       expandPanel.changeRequestView?.stop();
       expandPanel.ticketCommentsView?.stop();

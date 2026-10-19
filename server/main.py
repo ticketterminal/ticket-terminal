@@ -21,6 +21,7 @@ Docker section. Outside a container, leave this unset.
 import asyncio
 import datetime
 import functools
+import hashlib
 import json
 import mimetypes
 import os
@@ -52,6 +53,7 @@ import terminal_draft
 import db
 import jira_sync
 import memory_analysis
+import manager_summary
 import notion_sync
 import settings_store
 import workflow_insights
@@ -932,6 +934,49 @@ def _ticket_session_log(ticket: dict, provider: str):
             cwd = DEFAULT_WORKDIR
         return memory_analysis.claude_project_dir(cwd) / f"{session_id}.jsonl"
     return memory_analysis.codex_transcript_path(session_id)
+
+
+def _manager_summary_signature(ticket: dict, provider: str, log_path: Path | None) -> str:
+    if log_path and log_path.exists():
+        stat = log_path.stat()
+        transcript = f"{stat.st_size}:{stat.st_mtime_ns}"
+    else:
+        transcript = "no-transcript"
+    source = json.dumps({
+        "provider": provider, "sessionId": ticket.get(provider + "SessionId"),
+        "promptVersion": manager_summary.PROMPT_VERSION,
+        "summary": ticket.get("summary"), "description": ticket.get("description"),
+        "transcript": transcript,
+    }, sort_keys=True, default=str)
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
+@app.post("/api/manager-summary/{key}")
+def generate_manager_summary(key: str, provider: str = "claude", refresh: bool = False):
+    """Generate once per transcript revision and persist the architectural brief."""
+    if provider not in ("claude", "codex"):
+        return {"ok": False, "error": "unknown provider"}
+    ticket = db.read()["jiraTickets"].get(key)
+    if ticket is None:
+        return {"ok": False, "error": "no such ticket"}
+    log_path = _ticket_session_log(ticket, provider)
+    signature = _manager_summary_signature(ticket, provider, log_path)
+    stored = ticket.get("managerSummaries") if isinstance(ticket.get("managerSummaries"), dict) else {}
+    cached = stored.get(provider) if isinstance(stored.get(provider), dict) else {}
+    if not refresh and cached.get("signature") == signature and isinstance(cached.get("brief"), dict):
+        return {"ok": True, "brief": cached["brief"], "cached": True}
+    try:
+        events = agent_activity.read_activity(log_path, provider, memory_analysis.memory_dir_info()["path"], 100)
+        evidence = agent_activity.read_manager_evidence(log_path, provider, ticket)
+        brief = manager_summary.generate(ticket, evidence, events)
+        stored = {**stored, provider: {
+            "signature": signature, "brief": brief,
+            "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }}
+        db.update_ticket(key, {"managerSummaries": stored})
+        return {"ok": True, "brief": brief, "cached": False}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/api/tickets/{key}/change-requests/refresh")

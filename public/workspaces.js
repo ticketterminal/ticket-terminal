@@ -15,6 +15,7 @@ import { apiJson } from "./api.js";
 import { reloadBoard } from "./polling.js";
 import { buildCategoryUI } from "./lanes.js";
 import { initCategoryManagement } from "./category-management.js";
+import { loadBoardState } from "./board-state.js";
 
 // Sentinel <option> value — no real slug can collide with it (slugs are
 // lowercase letters, digits and hyphens).
@@ -171,6 +172,7 @@ async function switchWorkspace(slug, detached = 0){
 // itself. Run once at startup and again on every switch, because every one of
 // these belongs to the workspace, not to the install.
 export async function loadWorkspaceBoard(afterCategories){
+  loadBoardState();
   try {
     const [catsRes, configRes] = await Promise.all([apiJson("/api/categories"), apiJson("/api/config")]);
     state.categories = Array.isArray(catsRes) ? catsRes : [];
