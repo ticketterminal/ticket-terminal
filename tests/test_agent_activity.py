@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 import agent_activity
 import main
+import manager_summary
 from workspace_fixture import TempWorkspaces
 
 
@@ -138,6 +139,39 @@ class AgentActivityParserTests(unittest.TestCase):
         self.assertIn("preserving existing rows", story["rationale"])
         self.assertIn("without dropping data", story["outcome"])
 
+    def test_manager_evidence_keeps_reasoning_but_not_tool_results(self):
+        rows = [
+            {"type": "user", "message": {"role": "user", "content": "Change the geo service IAM policy"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The service runs in Kubernetes and its role is defined by the Terraform app-permissions module."}, {"type": "tool_use", "name": "Bash", "input": {"command": "terraform plan"}}]}},
+            {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "SECRET_OUTPUT"}]}},
+            {"type": "assistant", "message": {"role": "assistant", "content": "Promote through dev, staging, then production after validation."}},
+        ]
+        evidence = agent_activity.read_manager_evidence(self.write_jsonl("evidence.jsonl", rows), "claude", {"summary": "IAM policy"})
+        combined = json.dumps(evidence)
+        self.assertIn("Terraform app-permissions module", combined)
+        self.assertIn("dev, staging, then production", combined)
+        self.assertNotIn("SECRET_OUTPUT", combined)
+        self.assertNotIn("terraform plan", combined)
+
+    def test_manager_summary_prompt_demands_architecture_not_play_by_play(self):
+        prompt = manager_summary._prompt(
+            {"key": "DEVOPS-796", "summary": "Allow geo notifications to invoke alerts"},
+            {"request": "Add permission", "conversation": [{"role": "assistant", "text": "DEVOPS-781 must merge first."}]},
+            [{"kind": "write", "title": "Change policy", "detail": "rt_geo_service_policy.tftpl"}],
+        )
+        self.assertIn("IaC/module/resource", prompt)
+        self.assertIn("dev -> staging -> production", prompt)
+        self.assertIn("Do not narrate commands", prompt)
+        self.assertIn("DEVOPS-796", prompt)
+
+    def test_manager_summary_parses_the_six_part_brief(self):
+        brief = {field: field + " text" for field in manager_summary.FIELDS}
+        completed = type("Completed", (), {"returncode": 0, "stdout": json.dumps({"result": json.dumps(brief)}), "stderr": ""})()
+        with patch.object(manager_summary.claude_cli, "executable", return_value="/bin/claude"), \
+             patch.object(manager_summary.subprocess, "run", return_value=completed):
+            result = manager_summary.generate({"key": "DEVOPS-796"}, {"conversation": []}, [])
+        self.assertEqual(result, brief)
+
     def test_reader_bounds_work_to_the_transcript_tail_and_caches_it(self):
         old = {"message": {"content": [{"type": "tool_use", "id": "old", "name": "Bash", "input": {"command": "old command"}}]}}
         recent = {"message": {"content": [{"type": "tool_use", "id": "new", "name": "Bash", "input": {"command": "new command"}}]}}
@@ -179,6 +213,22 @@ class AgentActivityEndpointTests(unittest.TestCase):
 
     def test_endpoint_rejects_unknown_provider(self):
         self.assertFalse(main.get_agent_activity("T-1", "shell")["ok"])
+
+    def test_manager_summary_is_persisted_and_reused_for_the_same_transcript(self):
+        ticket = {"key": "T-1", "summary": "Change IAM", "claudeSessionId": "sid-1"}
+        self.workspaces.root.joinpath("db.json").write_text(json.dumps({"jiraTickets": {"T-1": ticket}}))
+        brief = {field: field + " text" for field in manager_summary.FIELDS}
+        with patch.object(main, "_ticket_session_log", return_value=None), \
+             patch.object(main.agent_activity, "read_activity", return_value=[]), \
+             patch.object(main.agent_activity, "read_manager_evidence", return_value={"request": "Change IAM", "conversation": []}), \
+             patch.object(main.manager_summary, "generate", return_value=brief) as generate:
+            first = main.generate_manager_summary("T-1", "claude")
+            second = main.generate_manager_summary("T-1", "claude")
+        self.assertTrue(first["ok"])
+        self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(second["brief"]["architecture"], "architecture text")
+        generate.assert_called_once()
 
 
 if __name__ == "__main__":

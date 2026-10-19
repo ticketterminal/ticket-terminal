@@ -43,8 +43,8 @@ anything that assumes multi-user or remote access.
 ```
 server/        FastAPI app + all Python modules (24 files, see §4)
 public/        ES-module frontend (25 .js files + index.html + styles.css, see §5)
-tests/         Python unittest suite (19 files, 241 tests)
-tests/ui/      DOM-less JS tests (7 .mjs files via linkedom, ~300 assertions)
+tests/         Python unittest suite (19 files, 257 tests)
+tests/ui/      DOM-less JS tests (11 .mjs files via linkedom, ~300 assertions)
 data/          Per-workspace JSON state (gitignored except *.example.json)
 docs/          Static marketing page, deployed to Cloudflare Pages (unrelated to the app itself)
 ```
@@ -88,6 +88,7 @@ docs/          Static marketing page, deployed to Cloudflare Pages (unrelated to
 | `category_management.py` | Role presets, LLM-driven taxonomy review scans, write-ahead-logged category revisions. |
 | `memory_analysis.py` | Reads the memory markdown folder into a graph (see `MEMORY_FORMAT.md`); per-session memory-read counts for both Claude and Codex. |
 | `agent_activity.py` | Parses durable Claude/Codex JSONL transcripts into normalized command, file, memory and skill events for the terminal activity trail. |
+| `manager_summary.py` | Produces a cached, architecture-level manager brief from bounded transcript evidence via a tool-less local Claude call. |
 | `change_requests.py` | Discovers GitHub PRs/GitLab MRs from Claude's structured `pr-link` records or structured Claude/Codex output, then normalizes and deduplicates them. |
 | `cost_analysis.py` | Thin wrapper around the external `codeburn` CLI for per-session cost. |
 | `spend_ledger.py` | Durable per-workspace history of what each *closed* terminal session cost. |
@@ -120,7 +121,7 @@ non-module script loaded before `board.js` — see the callout below).
 | `api.js` | REST shim (`apiJson`, `localDb`, `touch`, `withWorkspace`) — the one place `?w=` is appended to every request. |
 | `router.js` | Hash routing: grid / `#/category/<id>` / `#/memory[/<id>]` / `#/settings` / `#/insights` / `#/terminal/<key>/<provider>`, each optionally `#/w/<slug>`-prefixed. |
 | `lanes.js` | Category cards, per-category lanes, lane ordering, both ticket lists. |
-| `filters.js` | Team/person/status/assignee/sprint filters, grouped-vs-flat toggle, search. **Circular import with `lanes.js`** — see §9. |
+| `filters.js` | Team/person/status/assignee/sprint filters, grouped/flat/workflow/status-board toggle, search. **Circular import with `lanes.js`** — see §9. |
 | `ticket-row.js` | Shared row renderer for one ticket (Jira or Notion). |
 | `polling.js` | `reloadBoard()` (full fetch + re-render, every 60s and after every mutation), `pollLiveTicketStats()` (15s badge-only patch). |
 | `people.js` | Team roster, reporter→team mapping, "People & teams" settings section. |
@@ -129,6 +130,7 @@ non-module script loaded before `board.js` — see the callout below).
 | `badges.js` | Cost/memory badge text + detail boxes. Pure functions. |
 | `terminal-controller.js` | Embedded terminal lazy-start/close lifecycle plus the activity-trail toggle and refresh loop. |
 | `agent-trail.js` | Renders normalized agent actions beside the terminal; memory/skill resources deep-link into the memory graph. |
+| `board-state.js` | Persists workspace-scoped viewer state (filters/search, expanded tickets, embedded terminals, Agent Trail/Manager Summary mode) and restores it after board rebuilds. |
 | `terminal.js` | ⚠ **Classic script**, not a module (see callout below). Assigns `window.openTicketTerminal`. |
 | `terminal-page.js` | Full-page terminal view; calls the `window.openTicketTerminal` global. |
 | `workspaces.js` | Workspace routing, picker, switching, the Settings-page workspaces form. |
@@ -229,12 +231,20 @@ Other things worth knowing before touching this code:
   removed it and hard-error if it's passed.
 - Processes **deliberately outlive the WebSocket** — the server only forgets one
   once it has actually exited. Closing a browser tab doesn't kill your agent.
+- Board UI state is saved per workspace in localStorage. The 60-second rebuild,
+  filter changes and page reloads restore expanded tickets and reconnect saved
+  embedded terminal panels; only the active grouped/flat/workflow/status/search copy is
+  restored because one ticket can exist in several hidden DOM views at once.
 - `GET /api/running-processes` reports both long-lived `running` sessions and the
   narrower `working` set. `working` means the PTY produced output within the last
   three seconds; the blinking dot is therefore activity-based, not session-based.
 - `GET /api/agent-activity/{key}?provider=...` reads the provider's durable JSONL
   transcript and returns normalized action/resource events. The 60/40 terminal
   activity trail uses this endpoint in both embedded and full-page terminal views.
+- `POST /api/manager-summary/{key}?provider=...` runs only when the manager view is
+  opened, synthesizes system scope, rationale, change location, rollout and status,
+  and persists the result against the transcript signature. It never runs in the
+  1.5-second activity poll; detailed actions remain collapsed supporting evidence.
 - `POST /api/tickets/{key}/change-requests/refresh` scans those same structured
   transcripts (never the noisy raw PTY capture), materializes newly discovered
   GitHub PR/GitLab MR links into the ticket's `changeRequests` array, and retains
@@ -339,7 +349,7 @@ npm --prefix tests/ui ci && npm --prefix tests/ui test
   `TempWorkspaces` is the shared fixture: it patches `workspaces.DATA_ROOT` to a
   temp dir laid out like a real install and enters `workspaces.use(slug)`, so a
   test never touches the real `data/` tree.
-- JS: 10 `.mjs` files in `tests/ui/`, run as plain `node` scripts (no test runner)
+- JS: 11 `.mjs` files in `tests/ui/`, run as plain `node` scripts (no test runner)
   against a `linkedom`-provided DOM, chained with `&&` so the first failure stops
   the run. ~300 raw `assert` calls total.
 - CI (`.github/workflows/ci.yml` + `dco.yml`/`codeql.yml`/`scorecard.yml`): backend
@@ -389,7 +399,12 @@ assignee, filter by assignee, and curate which assignable users actually show up
 in the app versus what Jira's own permission scheme would otherwise expose — plus
 a fix for a bug where every Settings-page "Saved ✓" confirmation across four
 different forms was invisibly wiped by the full-form re-render that immediately
-followed it. PR #48 added the Jira-style status board and full-width layouts.
+followed it. PR #48 added the Jira-style status board and full-width layouts. A
+separate Workflow view is one continuous sortable list whose individual tickets
+are progressively indented by status. Epics always keep their subtasks together
+in a nested group at the epic's offset, even when the global view is flat;
+expanded tickets break back to the full board width so their terminals keep the
+available screen space.
 The latest work replaces the unreliable running badge with a true PTY-activity
 dot, removes the redundant token bar, fixes the initial empty-board refresh race,
 and adds the optional 60/40 graphical activity trail beside embedded and expanded

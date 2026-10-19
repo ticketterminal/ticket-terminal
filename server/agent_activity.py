@@ -341,6 +341,50 @@ def read_story(log_path: Path | None, provider: str, ticket: dict) -> dict:
     return result
 
 
+def read_manager_evidence(log_path: Path | None, provider: str, ticket: dict) -> dict:
+    """Return bounded conversational evidence for a manager-level synthesis.
+
+    Tool output is intentionally excluded. The summary model needs the agent's
+    architectural reasoning and conclusions, not terminal noise or a second
+    copy of the action trail. Transcript text remains untrusted input to the
+    tool-less summarizer.
+    """
+    request = _compact(ticket.get("description") or ticket.get("summary") or ticket.get("key") or "", 1200)
+    if provider not in {"claude", "codex"} or not log_path or not log_path.exists():
+        return {"request": request, "conversation": []}
+    stat = log_path.stat()
+    messages: list[tuple[str, str]] = []
+    with log_path.open("rb") as raw:
+        start = max(0, stat.st_size - MAX_TRANSCRIPT_BYTES)
+        raw.seek(start)
+        if start:
+            raw.readline()
+        for raw_line in raw:
+            try:
+                entry = json.loads(raw_line.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            message = _conversation_message(entry, provider)
+            if message:
+                messages.append(message)
+
+    # Preserve the initiating request plus the most recent reasoning. Repeated
+    # terminal redraws/tool results never enter this list.
+    selected = messages[:2] + messages[-14:]
+    conversation = []
+    seen = set()
+    for role, text in selected:
+        compact = _compact(
+            _SECRET_FLAG_RE.sub(lambda m: m.group(1) + " •••", _SECRET_ASSIGNMENT_RE.sub(lambda m: m.group(1) + "=•••", text)),
+            1600,
+        )
+        identity = (role, compact)
+        if len(compact) >= 12 and identity not in seen:
+            seen.add(identity)
+            conversation.append({"role": role, "text": compact})
+    return {"request": _story_request(messages, ticket) or request, "conversation": conversation}
+
+
 def _decode_args(value: Any) -> dict:
     if isinstance(value, dict):
         return value
