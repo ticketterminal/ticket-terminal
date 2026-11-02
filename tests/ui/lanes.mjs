@@ -18,7 +18,7 @@ Object.defineProperty(window.HTMLSelectElement.prototype,'value',{configurable:t
 globalThis.fetch=async()=>({ok:true,status:200,json:async()=>({ok:true})});
 
 const {state}=await import(root+'/public/state.js');
-const {buildLaneItems,renderLaneItems,renderStatusBoard,renderWorkflowView,resetStatusBoardColumns}=await import(root+'/public/lanes.js');
+const {buildLaneItems,renderLaneItems,renderStatusBoard,renderWorkflowView,resetStatusBoardColumns,applyTicketStatusToBoard}=await import(root+'/public/lanes.js');
 const {renderSearch,searchForTicket}=await import(root+'/public/filters.js');
 const {renderTicketRow}=await import(root+'/public/ticket-row.js');
 const {applyScrollCap}=await import(root+'/public/dom-utils.js');
@@ -157,6 +157,12 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
   assert.equal(board.querySelector('[data-status="Backlog"]'),null,'the status filter hides its whole board column');
 
   state.selectedStatuses=new Set(['Backlog','Selected for Development','In Progress','Awaiting approval']);
+  state.jiraStatusOptions=[
+    {id:'1',name:'Backlog'},
+    {id:'2',name:'Selected for Development'},
+    {id:'3',name:'In Progress'},
+    {id:'4',name:'Awaiting approval'},
+  ];
   state.lastTicketDocs=[
     doc('OPS-50',{jiraStatus:'Backlog',jiraPriority:'Low'}),
     doc('OPS-51',{jiraStatus:'Selected for Development',jiraPriority:'Low',issueType:'Epic'}),
@@ -176,6 +182,13 @@ const cmp=(a,b)=>a.id.localeCompare(b.id);
   assert(epicChildren.querySelector('[data-ticket-key="OPS-55"]'),'workflow always groups a subtask beneath its epic even when the global setting is flat');
   assert.equal(epicChildren.style.getPropertyValue('--workflow-parent-indent'),'28px','the subtask group follows its epic workflow offset');
   const workflowTicket=workflow.querySelector('[data-ticket-key="OPS-52"]');
+  const workflowStatus=workflowTicket.querySelector('.statussel');
+  workflowStatus.value='Awaiting approval';
+  workflowStatus.dispatchEvent(new window.Event('change'));
+  assert.equal(workflowStatus.disabled,false,'the board remains interactive while Jira syncs in the background');
+  assert.equal(workflowTicket.style.getPropertyValue('--workflow-indent'),'84px','a successful status choice moves the mounted ticket immediately without a board refresh');
+  assert.equal(state.lastTicketDocs.find(d=>d.id==='OPS-52').data().jiraStatus,'Awaiting approval','the local board snapshot stays current while terminal-safe reloads are paused');
+  applyTicketStatusToBoard('OPS-52','In Progress');
   workflowTicket.querySelector('.rowtri').click();
   assert.equal(workflowTicket.querySelector('.rowtri').getAttribute('aria-expanded'),'true','workflow tickets retain the normal expandable details and terminal');
   workflowTicket.querySelector('.rowtri').click(); // stop the expanded panel's polling timers

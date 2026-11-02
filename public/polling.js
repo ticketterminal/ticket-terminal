@@ -54,6 +54,11 @@ export async function reloadBoard(){
     let docs = Object.keys(ticketsObj || {})
       .map(k => makeSnapshot(k, ticketsObj[k]))
       .sort((a,b) => (b.data().createdAt || "").localeCompare(a.data().createdAt || ""));
+    docs = docs.map(doc => {
+      const pending = state.pendingTicketStatuses.get(doc.id);
+      if (!pending) return doc;
+      return makeSnapshot(doc.id, {...(doc.data() || {}), jiraStatus: pending.status});
+    });
     // Demo mode: nothing real to show yet (no tracker connected, no tickets of
     // any other origin either) — see demo-data.js for why these are safe to
     // show and never persisted anywhere.
