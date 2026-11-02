@@ -194,8 +194,9 @@
     margin-left:var(--workflow-effective-indent);
     width:calc(100% - var(--workflow-effective-indent));
     box-sizing:border-box;
-    transition:margin-left .16s ease,width .16s ease;
+    transition:margin-left .28s cubic-bezier(.2,.8,.2,1),width .28s cubic-bezier(.2,.8,.2,1);
   }
+  .workflowlist>.ticketrow.ticket-status-shifting{will-change:margin-left,width;}
   .workflowlist>.ticketrow:has(.rowtri[aria-expanded="true"]){
     margin-left:0;
     width:100%;
@@ -208,8 +209,9 @@
     margin-left:calc(var(--workflow-effective-parent-indent) + 16px);
     width:calc(100% - var(--workflow-effective-parent-indent) - 16px);
     box-sizing:border-box;
-    transition:margin-left .16s ease,width .16s ease;
+    transition:margin-left .28s cubic-bezier(.2,.8,.2,1),width .28s cubic-bezier(.2,.8,.2,1);
   }
+  .workflowlist>.epicchildrenwrap.ticket-status-shifting{will-change:margin-left,width;}
   .workflowlist>.epicchildrenwrap:has(.rowtri[aria-expanded="true"]){
     margin-left:0;
     width:100%;
@@ -380,6 +382,8 @@
   .gridview.hidden, .detailview.hidden, .memoryview.hidden, .settingsview.hidden, .insightsview.hidden, .terminalpageview.hidden{display:none;}
   .terminalpageview .agentterminal{height:72vh;margin-top:10px;}
   .terminalpageview .termhost{height:100%;margin-top:0;}
+  .terminalpage-titleblock{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1;}
+  .terminalpage-provider{font-family:"IBM Plex Mono",monospace;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-muted);}
   .backlink{display:inline-flex;align-items:center;gap:6px;font-family:"IBM Plex Mono",monospace;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);text-decoration:none;cursor:pointer;background:none;border:none;padding:0;margin-bottom:18px;}
   .backlink:hover{text-decoration:underline;}
   .detailhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;}

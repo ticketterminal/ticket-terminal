@@ -144,6 +144,11 @@ export const state = {
   lastTicketDocs: [],
   lastDbRef: null,
 
+  // Optimistic status edits that Jira/Notion is still accepting. Full board
+  // polls overlay these values so a slow tracker cannot briefly move a ticket
+  // back while its background transition is in flight.
+  pendingTicketStatuses: new Map(),
+
   // The old Artifact's `db` capability equivalent — set once in init().
   dbCapability: null,
 
