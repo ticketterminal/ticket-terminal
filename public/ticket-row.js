@@ -10,7 +10,7 @@ import { state } from "./state.js";
 import { el, jiraHref, categoryLabel, formatOpenDate } from "./dom-utils.js";
 import { apiJson, touch } from "./api.js";
 import { reloadBoard } from "./polling.js";
-import { JIRA_PRIORITY_ORDER, JIRA_PRIORITY_COLOR } from "./lanes.js";
+import { JIRA_PRIORITY_ORDER, JIRA_PRIORITY_COLOR, applyTicketStatusToBoard } from "./lanes.js";
 import { teamColor, teamForReporter } from "./people.js";
 import { costBadgeText, costBadgeTitle, renderCostDetail, renderMemoryDetail } from "./badges.js";
 import { attachTerminal } from "./terminal-controller.js";
@@ -24,6 +24,20 @@ const STATUS_SELECT_ORDER = [
   "selected for development", "in progress",
   "waiting approval", "waiting for approval", "awaiting approval", "done",
 ];
+const statusSyncQueues = new Map();
+let statusSyncVersion = 0;
+
+// Preserve the user's click order at the tracker without blocking the board.
+// Jira transitions can be slow; the select remains interactive and subsequent
+// choices queue behind the in-flight write for this ticket only.
+function enqueueStatusSync(ticketKey, task){
+  const previous = statusSyncQueues.get(ticketKey) || Promise.resolve();
+  const current = previous.catch(() => {}).then(task);
+  statusSyncQueues.set(ticketKey, current);
+  current.finally(() => {
+    if (statusSyncQueues.get(ticketKey) === current) statusSyncQueues.delete(ticketKey);
+  }).catch(() => {});
+}
 
 function statusSelectRank(status){
   const rank = STATUS_SELECT_ORDER.indexOf((status || "").trim().toLowerCase());
@@ -154,6 +168,20 @@ function setTrainStatus(icon, status){
   icon.title = status ? "Train progress: " + status : "Train progress";
 }
 
+function syncRenderedTicketStatus(ticketKey, status){
+  document.querySelectorAll(".ticketrow").forEach(renderedRow => {
+    if (renderedRow.dataset.ticketKey !== ticketKey) return;
+    renderedRow.dataset.ticketStatus = status;
+    const select = renderedRow.querySelector(".statussel");
+    if (select){
+      select.value = status;
+      select._syncStatusWidth?.();
+    }
+    const train = renderedRow.querySelector(".trainstatus");
+    if (train) setTrainStatus(train, status);
+  });
+}
+
 function buildTrainStatus(status){
   const icon = el("span", "trainstatus");
   icon.setAttribute("aria-hidden", "true");
@@ -226,27 +254,39 @@ function buildBadgeRow(data, doc, dbRef, row){
       statusSel.appendChild(opt);
     });
     statusSel.title = "Status — changes push straight to " + tracker;
-    statusSel.addEventListener("change", async () => {
+    statusSel.addEventListener("change", () => {
       const newVal = statusSel.value;
-      const prevVal = data.jiraStatus;
+      const prevVal = row.dataset.ticketStatus || data.jiraStatus;
       const match = statusOptions.find(s => s.name === newVal);
       if (!match){ statusSel.value = prevVal; statusSel._syncStatusWidth?.(); return; } // shouldn't happen — only the unshifted current value lacks one
-      setTrainStatus(trainStatus, newVal);
-      statusSel.disabled = true;
-      try {
-        const res = await apiJson("/api/tickets/" + encodeURIComponent(doc.id) + "/jira-transition", {method:"POST", body: JSON.stringify({transitionId: match.id, statusName: newVal})});
-        if (!res.ok) throw new Error(res.error || "failed");
-        if (prevVal.toLowerCase() !== "done" && newVal.toLowerCase() === "done"){
-          await animateTicketDepartures(doc.id, row);
+      // Optimistic locally, authoritative remotely: moving the workflow row
+      // must not depend on a full reload, because reloads pause while a live
+      // terminal is open. A failed tracker transition rolls this straight back.
+      applyTicketStatusToBoard(doc.id, newVal);
+      syncRenderedTicketStatus(doc.id, newVal);
+      const version = ++statusSyncVersion;
+      state.pendingTicketStatuses.set(doc.id, {status:newVal, version});
+
+      enqueueStatusSync(doc.id, async () => {
+        try {
+          const res = await apiJson("/api/tickets/" + encodeURIComponent(doc.id) + "/jira-transition", {method:"POST", body: JSON.stringify({transitionId: match.id, statusName: newVal})});
+          if (!res.ok) throw new Error(res.error || "failed");
+          if (state.pendingTicketStatuses.get(doc.id)?.version === version){
+            state.pendingTicketStatuses.delete(doc.id);
+            if (prevVal.toLowerCase() !== "done" && newVal.toLowerCase() === "done"){
+              await animateTicketDepartures(doc.id, row);
+            }
+          }
+        } catch (e) {
+          const isLatest = state.pendingTicketStatuses.get(doc.id)?.version === version;
+          if (isLatest){
+            state.pendingTicketStatuses.delete(doc.id);
+            applyTicketStatusToBoard(doc.id, prevVal);
+            syncRenderedTicketStatus(doc.id, prevVal);
+          }
+          state.dom.dbStateEl.textContent = "Couldn't move " + doc.id + " to " + newVal + " in " + tracker + ": " + e.message;
         }
-        await reloadBoard();
-      } catch (e) {
-        state.dom.dbStateEl.textContent = "Couldn't move " + doc.id + " to " + newVal + " in " + tracker + ": " + e.message;
-        statusSel.value = prevVal;
-        statusSel._syncStatusWidth?.();
-        setTrainStatus(trainStatus, prevVal);
-        statusSel.disabled = false;
-      }
+      });
     });
     badges.prepend(buildStatusProgress(statusSel, trainStatus));
   } else {
@@ -667,6 +707,7 @@ export function renderTicketRow(doc, dbRef){
   const cats = Array.isArray(data.categories) ? data.categories : [];
   const row = el("div","ticketrow");
   row.dataset.ticketKey = doc.id;
+  row.dataset.ticketStatus = data.jiraStatus || "";
   const subjectCategory = cats[0] && state.categories.find(c => c.id === cats[0]);
   if (subjectCategory && subjectCategory.color) row.style.setProperty("--subject", subjectCategory.color);
 

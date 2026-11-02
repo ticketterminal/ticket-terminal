@@ -151,6 +151,7 @@ export function applyRouteWorkspace(slug){
   // on the way back.
   const detached = detachAllTerminals();
   state.boardGeneration++;   // invalidates anything already in flight for the old workspace
+  state.pendingTicketStatuses.clear(); // optimistic overlays belong to the board being left
   state.workspaceSlug = slug;
   renderWorkspacePicker();
   switchWorkspace(slug, detached);

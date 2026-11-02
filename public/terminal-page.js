@@ -11,7 +11,9 @@ import { createChangeRequestView } from "./change-requests.js";
 
 const hostEl = document.getElementById("terminalPageHost");
 const titleEl = document.getElementById("terminalPageTitle");
+const providerEl = document.getElementById("terminalPageProvider");
 const controlsEl = document.getElementById("terminalPageControls");
+const defaultDocumentTitle = document.title || "Ticket Terminal";
 
 // Whichever ticket/provider this page currently holds, so leaving the route
 // (router.js calls this before rendering anything else) releases the
@@ -19,6 +21,8 @@ const controlsEl = document.getElementById("terminalPageControls");
 let current = null;
 
 export function disposeTerminalPage(){
+  document.title = defaultDocumentTitle;
+  providerEl.textContent = "";
   if (!current) return;
   current.changeRequestView?.dispose();
   try { hostEl.disposeTicketTerminal?.(); } catch (e) { /* already gone */ }
@@ -28,13 +32,18 @@ export function disposeTerminalPage(){
 
 export async function renderTerminalPage(key, provider){
   current = { key, provider };
-  titleEl.textContent = key + " — " + (provider === "codex" ? "Codex" : "Claude");
+  const providerLabel = provider === "codex" ? "Codex" : "Claude";
+  titleEl.textContent = key;
+  providerEl.textContent = providerLabel + " terminal";
+  document.title = key + " · " + providerLabel + " · " + defaultDocumentTitle;
   hostEl.innerHTML = "";
   let data;
   try {
     const tickets = await apiJson("/api/tickets");
+    if (!current || current.key !== key || current.provider !== provider) return;
     data = tickets[key];
   } catch (e) {
+    if (!current || current.key !== key || current.provider !== provider) return;
     hostEl.textContent = "Couldn't load this ticket: " + e.message;
     return;
   }
@@ -42,6 +51,9 @@ export async function renderTerminalPage(key, provider){
     hostEl.textContent = "No such ticket: " + key;
     return;
   }
+  const summary = (data.summary || "Untitled ticket").trim();
+  titleEl.textContent = key + " — " + summary;
+  document.title = key + " — " + summary + " · " + defaultDocumentTitle;
   const cats = (data.categories || []).map(categoryLabel).join(", ") || "uncategorized";
   const promptText = "Work on " + key + " (" + cats + "): " + data.summary + "\n" + (data.url || "");
   const view = createAgentTrailView(key, provider, data);
