@@ -603,6 +603,48 @@ function workflowStage(status){
   return 0; // backlog/open/to do and unknown statuses stay flush left
 }
 
+function workflowIndent(status){
+  return Math.min(workflowStage(status) * 28, 140) + "px";
+}
+
+// Status edits are reflected in the current board snapshot immediately instead
+// of waiting for reloadBoard(). That distinction matters while a terminal is
+// open: full reloads deliberately pause so they cannot tear down its live PTY.
+// Updating the CSS variable in place also lets the workflow row travel to its
+// new step with the existing margin/width transition rather than jumping after
+// a later refresh. An expanded row remains full width, but retains the new
+// indent and lands in the right place as soon as it is collapsed.
+export function applyTicketStatusToBoard(ticketKey, status){
+  const docIndex = state.lastTicketDocs.findIndex(candidate => candidate.id === ticketKey);
+  if (docIndex >= 0){
+    const current = state.lastTicketDocs[docIndex];
+    const nextData = {...(current.data() || {}), jiraStatus: status};
+    // Snapshot adapters are not required to return a mutable object. Replace
+    // this one entry so every sorter/filter reads the optimistic status even
+    // with Firebase-like snapshots whose data() creates a fresh value.
+    state.lastTicketDocs[docIndex] = {...current, data: () => nextData};
+  }
+
+  const rows = [...workflowListEl.querySelectorAll(":scope > .ticketrow")]
+    .filter(row => row.dataset.ticketKey === ticketKey);
+  rows.forEach(row => {
+    row.classList.add("ticket-status-shifting");
+    row.style.setProperty("--workflow-indent", workflowIndent(status));
+
+    // An epic/parent's sub-task group follows the same workflow step.
+    const children = row.nextElementSibling;
+    if (children?.classList.contains("epicchildrenwrap")){
+      children.classList.add("ticket-status-shifting");
+      children.style.setProperty("--workflow-parent-indent", workflowIndent(status));
+    }
+
+    setTimeout(() => {
+      row.classList.remove("ticket-status-shifting");
+      children?.classList.remove("ticket-status-shifting");
+    }, 380);
+  });
+}
+
 function compareByWorkflowStatus(a, b){
   const da = a.data() || {}, db2 = b.data() || {};
   return workflowStage(da.jiraStatus) - workflowStage(db2.jiraStatus) || compareByPriority(a, b);
@@ -624,7 +666,7 @@ export function renderWorkflowView(){
   const byKey = new Map(docs.map(doc => [doc.id, doc]));
   workflowListEl.querySelectorAll(":scope > .ticketrow").forEach(row => {
     const data = byKey.get(row.dataset.ticketKey)?.data() || {};
-    row.style.setProperty("--workflow-indent", Math.min(workflowStage(data.jiraStatus) * 28, 140) + "px");
+    row.style.setProperty("--workflow-indent", workflowIndent(data.jiraStatus));
   });
   workflowListEl.querySelectorAll(":scope > .epicchildrenwrap").forEach(group => {
     const parentRow = group.previousElementSibling;
