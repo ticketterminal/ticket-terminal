@@ -161,7 +161,26 @@
       <h1>LLM usage insights</h1>
       <button type="button" class="refreshbtn" id="insightsRefreshBtn">⟳ Refresh</button>
     </div>
-    <div class="detailnote">Cost, vendor/model comparison, and caching — computed directly from your session history. No LLM call happens on this page.</div>
+    <div class="detailnote">Cost, vendor/model comparison, and caching — filtered from a saved local session-cost ledger. Refresh updates that ledger from codeburn; changing the window does not rescan transcripts.</div>
+    <div class="insightsrangebar">
+      <label for="insightsRangePreset">Usage window</label>
+      <select id="insightsRangePreset">
+        <option value="last7">Last 7 days</option>
+        <option value="week">Last week</option>
+        <option value="last30" selected>Last 30 days</option>
+        <option value="month">This month</option>
+        <option value="all">All time</option>
+        <option value="custom">Custom range</option>
+      </select>
+      <div class="insightscustom hidden" id="insightsCustomRange">
+        <label for="insightsStartDate">From</label>
+        <input type="date" id="insightsStartDate">
+        <label for="insightsEndDate">Through</label>
+        <input type="date" id="insightsEndDate">
+        <button type="button" class="refreshbtn" id="insightsApplyRangeBtn">Apply</button>
+      </div>
+      <span class="insightsrangesummary" id="insightsRangeSummary"></span>
+    </div>
     <div class="insightsbody" id="insightsBody"></div>
   </div>
 
@@ -237,6 +256,13 @@
       <summary class="sectionhead">Workspaces</summary>
       <div class="lane">
         <div class="lanebody settingsform" id="settingsWorkspacesForm"></div>
+      </div>
+    </details>
+
+    <details class="sectiondetails" open>
+      <summary class="sectionhead">Resource use</summary>
+      <div class="lane">
+        <div class="lanebody settingsform" id="settingsResourceForm"></div>
       </div>
     </details>
 

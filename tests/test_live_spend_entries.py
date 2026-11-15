@@ -17,6 +17,7 @@ def cost_row(session_id, cost=0.42, **extra):
     row = {
         'sessionId': session_id, 'models': ['Sonnet 5'], 'cost': cost, 'calls': 3, 'turns': 1,
         'inputTokens': 100, 'outputTokens': 200, 'cacheReadTokens': 50, 'cacheWriteTokens': 10,
+        'startedAt': '2026-10-15T12:00:00Z', 'endedAt': None,
         'durationMs': 300000,
     }
     row.update(extra)
@@ -43,7 +44,7 @@ class LiveSpendEntriesTests(unittest.TestCase):
 
     def test_one_entry_per_running_process_with_ticket_context(self):
         self.track('T-1', 'claude')
-        with patch.object(main.cost_analysis, 'get_session_costs', return_value={'sess-1': cost_row('sess-1', cost=1.5)}):
+        with patch.object(main.spend_ledger, 'read_entries', return_value=[cost_row('sess-1', cost=1.5)]):
             entries = main._live_spend_entries()
         self.assertEqual(len(entries), 1)
         e = entries[0]
@@ -53,29 +54,31 @@ class LiveSpendEntriesTests(unittest.TestCase):
         self.assertEqual(e['cost'], 1.5)
         self.assertEqual(e['categories'], ['bugs'])
         self.assertEqual(e['priority'], 'High')
+        self.assertEqual(e['startedAt'], '2026-10-15T12:00:00Z')
 
     def test_covers_both_providers_on_different_tickets(self):
         self.track('T-1', 'claude')
         self.track('T-2', 'codex')
-        with patch.object(main.cost_analysis, 'get_session_costs', return_value={
-            'sess-1': cost_row('sess-1'), 'sess-2': cost_row('sess-2'),
-        }):
+        with patch.object(main.spend_ledger, 'read_entries', return_value=[
+            cost_row('sess-1'), cost_row('sess-2'),
+        ]):
             entries = main._live_spend_entries()
         self.assertEqual({e['ticketKey'] for e in entries}, {'T-1', 'T-2'})
 
     def test_skips_a_process_codeburn_has_no_row_for_yet(self):
         self.track('T-1', 'claude')
-        with patch.object(main.cost_analysis, 'get_session_costs', return_value={}):
+        with patch.object(main.spend_ledger, 'read_entries', return_value=[]):
             self.assertEqual(main._live_spend_entries(), [])
 
-    def test_never_raises_when_codeburn_itself_fails(self):
+    def test_never_launches_codeburn_for_an_insights_read(self):
         self.track('T-1', 'claude')
-        with patch.object(main.cost_analysis, 'get_session_costs', side_effect=RuntimeError('boom')):
+        with patch.object(main.spend_ledger, 'read_entries', return_value=[]), \
+             patch.object(main.cost_analysis, 'get_session_costs', side_effect=AssertionError('must stay cold')):
             self.assertEqual(main._live_spend_entries(), [])
 
     def test_a_process_in_another_workspace_is_invisible_here(self):
         main.running_processes['someother|claude|T-9'] = {'proc': None}
-        with patch.object(main.cost_analysis, 'get_session_costs', return_value={'sess-1': cost_row('sess-1')}):
+        with patch.object(main.spend_ledger, 'read_entries', return_value=[cost_row('sess-1')]):
             entries = main._live_spend_entries()
         self.assertEqual(entries, [])
 

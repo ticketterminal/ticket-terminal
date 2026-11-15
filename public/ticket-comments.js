@@ -168,6 +168,7 @@ export function createTicketCommentsView(key, data){
       load();
       timer = setInterval(() => {
         if (!shell.isConnected){ clearInterval(timer); timer = null; active = false; return; }
+        if (document.hidden) return;
         load({quiet:true});
       }, REFRESH_MS);
       timer.unref?.(); // lets DOM-only Node tests exit; browser interval ids are numbers

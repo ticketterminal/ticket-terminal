@@ -11,13 +11,14 @@ from workspace_fixture import TempWorkspaces
 
 def entry(provider='claude', model='Sonnet 5', cost=1.0, calls=2, turns=1, duration_ms=1000,
           categories=None, input_tokens=100, output_tokens=100, cache_read=0, ticket_key='T-1',
-          session_id='s-1'):
+          session_id='s-1', started_at='2026-10-15T12:00:00Z'):
     return {
         'ticketKey': ticket_key, 'provider': provider, 'sessionId': session_id,
         'models': [model], 'cost': cost, 'calls': calls, 'turns': turns,
         'inputTokens': input_tokens, 'outputTokens': output_tokens,
         'cacheReadTokens': cache_read, 'cacheWriteTokens': 0, 'durationMs': duration_ms,
         'categories': categories if categories is not None else ['bugs'],
+        'startedAt': started_at,
     }
 
 
@@ -93,6 +94,51 @@ class CachingStatsTests(unittest.TestCase):
         self.assertAlmostEqual(result['byProvider'][0]['cacheEfficiency'], 0.75)
 
 
+class ProductivityStatsTests(unittest.TestCase):
+    def test_measures_unique_tickets_current_outcomes_delivery_and_spend(self):
+        entries = [
+            entry(ticket_key='T-1', session_id='s-1', cost=1),
+            entry(ticket_key='T-1', session_id='s-2', cost=3),
+            entry(ticket_key='T-2', session_id='s-3', cost=2),
+            entry(ticket_key='T-3', session_id='s-4', cost=4),
+        ]
+        tickets = {
+            'T-1': {
+                'jiraStatus': 'Done',
+                'changeRequests': [
+                    {'url': 'https://github.com/acme/repo/pull/1'},
+                    {'url': 'https://github.com/acme/repo/pull/1'},
+                ],
+                'mrLink': 'https://github.com/acme/repo/pull/2',
+            },
+            'T-2': {
+                'jiraStatus': 'Awaiting approval',
+                'changeRequests': ['https://gitlab.example/acme/repo/-/merge_requests/3'],
+            },
+            # T-3 is historical ledger data outside the current ticket window. It still
+            # counts as work and spend, but cannot be assigned a current status outcome.
+        }
+        result = wi.productivity_stats(entries, tickets)
+        self.assertEqual(result['ticketsWorked'], 3)
+        self.assertEqual(result['sessions'], 4)
+        self.assertEqual(result['totalCost'], 10)
+        self.assertAlmostEqual(result['costPerTicket'], 10 / 3)
+        self.assertEqual(result['medianSessionCost'], 2.5)
+        self.assertEqual(result['completed'], 1)
+        self.assertEqual(result['awaitingApproval'], 1)
+        self.assertEqual(result['knownStatusTickets'], 2)
+        self.assertEqual(result['changeRequests'], 3)
+        self.assertEqual(result['deliveryTickets'], 2)
+
+    def test_empty_window_has_zero_counts_and_no_cost_averages(self):
+        result = wi.productivity_stats([], {})
+        self.assertEqual(result['ticketsWorked'], 0)
+        self.assertEqual(result['sessions'], 0)
+        self.assertEqual(result['totalCost'], 0)
+        self.assertIsNone(result['costPerTicket'])
+        self.assertIsNone(result['medianSessionCost'])
+
+
 class MemoryStructureStatsTests(unittest.TestCase):
     def test_dedupes_the_sessionid_and_provider_alias_for_the_same_real_session(self):
         # all_ticket_memory_usage aliases one real session under both its raw sessionId AND
@@ -143,8 +189,10 @@ class OptimizeFindingsTests(unittest.TestCase):
 class ComputeInsightsTests(unittest.TestCase):
     def setUp(self):
         self.workspaces = TempWorkspaces().start()
+        wi.clear_diagnostic_cache()
 
     def tearDown(self):
+        wi.clear_diagnostic_cache()
         self.workspaces.stop()
 
     def test_shape_and_no_llm_call_anywhere(self):
@@ -154,7 +202,9 @@ class ComputeInsightsTests(unittest.TestCase):
              patch.object(wi, 'get_optimize_findings', return_value=None), \
              patch('claude_cli.command', side_effect=AssertionError('must never call an LLM')):
             result = wi.compute_insights({}, '/tmp')
-        self.assertEqual(set(result), {'vendorModel', 'caching', 'memory', 'codeburnOptimize', 'ledgerEntryCount'})
+        self.assertEqual(set(result), {'productivity', 'vendorModel', 'caching', 'memory', 'codeburnOptimize',
+                                      'codeburnOptimizeLifetimeOnly', 'ledgerEntryCount',
+                                      'totalLedgerEntryCount', 'range'})
         self.assertEqual(result['ledgerEntryCount'], 1)
 
     def test_live_entries_are_merged_in_alongside_the_closed_ledger(self):
@@ -181,6 +231,38 @@ class ComputeInsightsTests(unittest.TestCase):
             result = wi.compute_insights({}, '/tmp', live_entries=[live])
         self.assertEqual(result['ledgerEntryCount'], 1)
         self.assertEqual(sum(r['totalCost'] for r in result['vendorModel']['byVendorModel']), 1.0)
+
+    def test_bounded_range_filters_by_session_start_and_suppresses_lifetime_optimize(self):
+        entries = [
+            entry(session_id='old', cost=50, started_at='2026-09-30T23:59:59Z'),
+            entry(session_id='inside', cost=2, started_at='2026-10-05T09:00:00+00:00'),
+            entry(session_id='at-end', cost=99, started_at='2026-10-08T00:00:00Z'),
+        ]
+        with patch.object(wi.spend_ledger, 'read_entries', return_value=entries), \
+             patch.object(wi.memory_analysis, 'all_ticket_memory_usage', return_value={}), \
+             patch.object(wi.memory_analysis, 'memory_file_stats', return_value={}), \
+             patch.object(wi, 'get_optimize_findings', side_effect=AssertionError('lifetime data must not leak')):
+            result = wi.compute_insights({}, '/tmp', start='2026-10-01T00:00:00Z', end='2026-10-08T00:00:00Z')
+        self.assertEqual(result['ledgerEntryCount'], 1)
+        self.assertEqual(result['totalLedgerEntryCount'], 3)
+        self.assertEqual(result['vendorModel']['byVendorModel'][0]['totalCost'], 2)
+        self.assertEqual(result['productivity']['totalCost'], 2)
+        self.assertEqual(result['productivity']['ticketsWorked'], 1)
+        self.assertIsNone(result['codeburnOptimize'])
+        self.assertTrue(result['codeburnOptimizeLifetimeOnly'])
+
+    def test_bounded_range_falls_back_to_closed_time_but_excludes_undated_history(self):
+        fallback = entry(session_id='fallback', started_at=None)
+        fallback['closedAt'] = '2026-10-03T12:00:00Z'
+        undated = entry(session_id='undated', started_at=None)
+        result = wi.filter_entries([fallback, undated], '2026-10-01T00:00:00Z', '2026-10-08T00:00:00Z')
+        self.assertEqual([row['sessionId'] for row in result], ['fallback'])
+
+    def test_rejects_an_invalid_or_reversed_range(self):
+        with self.assertRaisesRegex(ValueError, 'invalid insights start'):
+            wi.filter_entries([], 'not-a-date', None)
+        with self.assertRaisesRegex(ValueError, 'must be before'):
+            wi.filter_entries([], '2026-10-08T00:00:00Z', '2026-10-01T00:00:00Z')
 
 
 if __name__ == '__main__':

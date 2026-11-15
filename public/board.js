@@ -69,7 +69,10 @@ refreshBtn.addEventListener("click", async () => {
 // periodically so an already-open tab picks up those changes without making
 // the viewer click refresh themselves. Cheap: hits the local server only,
 // never Jira directly.
-setInterval(() => { reloadBoard(); }, 60000);
+setInterval(() => { if (!document.hidden) reloadBoard(); }, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) reloadBoard();
+});
 
 async function init(){
   state.dbCapability = localDb;
