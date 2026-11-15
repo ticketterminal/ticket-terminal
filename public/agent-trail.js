@@ -253,6 +253,7 @@ export function createAgentTrailView(key, provider, ticket={}){
   let managerRequestNumber = 0;
   let mode = "trail";
   async function refresh(){
+    if (document.hidden) return;
     const ownRequest = ++requestNumber;
     try {
       const response = await apiJson("/api/agent-activity/" + encodeURIComponent(key) + "?provider=" + encodeURIComponent(provider));
@@ -311,7 +312,7 @@ export function createAgentTrailView(key, provider, ticket={}){
     if (open){
       refresh();
       if (nextMode === "summary") refreshManager();
-      timer = setInterval(refresh, 1500);
+      timer = setInterval(() => { if (!document.hidden) refresh(); }, 1500);
     }
     const notifyResize = () => window.dispatchEvent(new Event("resize"));
     if (window.requestAnimationFrame) window.requestAnimationFrame(notifyResize);
@@ -326,7 +327,7 @@ export function createAgentTrailView(key, provider, ticket={}){
     if (!trail.hidden){
       refresh();
       clearInterval(timer);
-      timer = setInterval(refresh, 1500);
+      timer = setInterval(() => { if (!document.hidden) refresh(); }, 1500);
     }
   }
   toggle.addEventListener("click", () => selectMode("trail"));

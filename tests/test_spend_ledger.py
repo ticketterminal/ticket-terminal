@@ -86,6 +86,31 @@ class SpendLedgerTests(unittest.TestCase):
         with workspaces.use('other'):
             self.assertEqual(spend_ledger.read_entries(), [])
 
+    def test_sync_backfills_ticket_titled_history_and_skips_unrelated_sessions(self):
+        historical = cost_row('old-session', cost=12.5, provider='claude', title='DEVOPS-799 older work')
+        current = cost_row('sess-1', cost=2.0, provider='claude', title='generic title')
+        unrelated = cost_row('other', cost=999, provider='claude', title='random coding session')
+        result = spend_ledger.sync_from_costs(
+            db.read()['jiraTickets'],
+            {'old-session': historical, 'sess-1': current, 'other': unrelated},
+        )
+        entries = spend_ledger.read_entries()
+        self.assertEqual(result['imported'], 2)
+        self.assertEqual({entry['sessionId'] for entry in entries}, {'old-session', 'sess-1'})
+        self.assertEqual(sum(entry['cost'] for entry in entries), 14.5)
+        self.assertEqual(next(e for e in entries if e['sessionId'] == 'old-session')['ticketKey'], 'DEVOPS-799')
+
+    def test_sync_updates_growing_session_without_duplicate_or_rewrite_when_unchanged(self):
+        tickets = db.read()['jiraTickets']
+        first = {'sess-1': cost_row('sess-1', cost=1, provider='claude', title='generic')}
+        second = {'sess-1': cost_row('sess-1', cost=3, provider='claude', title='generic')}
+        self.assertTrue(spend_ledger.sync_from_costs(tickets, first)['changed'])
+        self.assertFalse(spend_ledger.sync_from_costs(tickets, first)['changed'])
+        self.assertTrue(spend_ledger.sync_from_costs(tickets, second)['changed'])
+        entries = spend_ledger.read_entries()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]['cost'], 3)
+
 
 if __name__ == '__main__':
     unittest.main()

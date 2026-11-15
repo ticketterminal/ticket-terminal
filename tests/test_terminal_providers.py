@@ -42,7 +42,10 @@ class SubmitThenDisconnectSocket(Socket):
 class ProviderTests(unittest.TestCase):
     # A temp data root so nothing here can reach the real data/ tree, and so
     # the workspace half of a process key is a known value.
-    def setUp(self): self.workspaces = TempWorkspaces().start()
+    def setUp(self):
+        self.workspaces = TempWorkspaces().start()
+        main.cost_analysis.clear_cache()
+        main._ticket_cost_response_cache.clear()
 
     def tearDown(self):
         main.running_processes.clear()
@@ -228,8 +231,59 @@ class ProviderTests(unittest.TestCase):
     def test_costs_keep_both_providers(self):
         with patch.object(main.db, 'read', return_value={'jiraTickets':{'TEST-1':{'claudeSessionId':'a','codexSessionId':'b'}}}), \
              patch.object(main.cost_analysis, 'get_session_costs', return_value={'a':{'cost':1}, 'b':{'cost':2}}):
-            result = main.get_ticket_costs()['costs']
+            result = main.get_ticket_costs(refresh=True)['costs']
             self.assertEqual(result['claude:TEST-1']['cost'], 1)
             self.assertEqual(result['codex:TEST-1']['cost'], 2)
+
+    def test_normal_cost_read_uses_durable_ledger_without_codeburn(self):
+        ticket = {'claudeSessionId': 'a'}
+        row = {'sessionId': 'a', 'cost': 1.25, 'provider': 'claude'}
+        with patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': ticket}}), \
+             patch.object(main.spend_ledger, 'read_entries', return_value=[row]), \
+             patch.object(main.cost_analysis, 'get_session_costs', side_effect=AssertionError('must stay cold')):
+            result = main.get_ticket_costs()
+        self.assertFalse(result['scanned'])
+        self.assertEqual(result['costs']['claude:TEST-1']['cost'], 1.25)
+
+    def test_unchanged_cost_snapshot_skips_reparsing_workspace_json(self):
+        ticket = {'claudeSessionId': 'a'}
+        row = {'sessionId': 'a', 'cost': 1.25, 'provider': 'claude'}
+        signature = (('db', 1, 1), ('ledger', 1, 1))
+        with patch.object(main, '_ticket_cost_snapshot_signature', return_value=signature), \
+             patch.object(main.db, 'read', return_value={'jiraTickets': {'TEST-1': ticket}}) as read_db, \
+             patch.object(main.spend_ledger, 'read_entries', return_value=[row]) as read_ledger:
+            first = main.get_ticket_costs()
+            second = main.get_ticket_costs()
+        self.assertEqual(first, second)
+        read_db.assert_called_once()
+        read_ledger.assert_called_once()
+
+    def test_idle_reaper_stops_only_detached_sessions_after_configured_timeout(self):
+        old = MagicMock(); old.poll.return_value = None
+        connected = MagicMock(); connected.poll.return_value = None
+        recent = MagicMock(); recent.poll.return_value = None
+        old_key = self.process_key('OLD-1', 'claude')
+        connected_key = self.process_key('LIVE-1', 'claude')
+        recent_key = self.process_key('NEW-1', 'claude')
+        main.running_processes.update({
+            old_key: {'proc': old, 'master_fd': 1, 'detached_at': 100, 'ws': None},
+            connected_key: {'proc': connected, 'master_fd': 2, 'detached_at': 100, 'ws': object()},
+            recent_key: {'proc': recent, 'master_fd': 3, 'detached_at': 950, 'ws': None},
+        })
+        with patch.object(main.settings_store, 'read', return_value={'agentIdleTimeoutMinutes': 10}), \
+             patch.object(main, '_terminate_process') as terminate:
+            stopped = main.reap_idle_processes(now=1000)
+        self.assertEqual(stopped, ['OLD-1'])
+        terminate.assert_called_once_with(old_key, unittest.mock.ANY, 'idle-timeout')
+        self.assertIn(connected_key, main.running_processes)
+        self.assertIn(recent_key, main.running_processes)
+
+    def test_idle_reaper_is_disabled_at_zero(self):
+        key = self.process_key('OLD-1', 'claude')
+        main.running_processes[key] = {'proc': MagicMock(), 'master_fd': 1, 'detached_at': 1, 'ws': None}
+        with patch.object(main.settings_store, 'read', return_value={'agentIdleTimeoutMinutes': 0}), \
+             patch.object(main, '_terminate_process') as terminate:
+            self.assertEqual(main.reap_idle_processes(now=10000), [])
+        terminate.assert_not_called()
 
 if __name__ == '__main__': unittest.main()
