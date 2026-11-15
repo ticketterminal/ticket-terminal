@@ -27,6 +27,7 @@ function markRefreshed(){
 }
 
 export async function reloadBoard(){
+  if (document.hidden) return;
   if (state.liveTerminalCount > 0){
     dbStateEl.textContent = "Board refresh paused — " + state.liveTerminalCount + " agent session" + (state.liveTerminalCount === 1 ? "" : "s") + " open";
     return;
@@ -81,8 +82,12 @@ export async function reloadBoard(){
 // (+ one memory-usage parse) per tick, not N. Patches already-mounted DOM via
 // state.costBadgeEls/memoryBadgeEls; never touches anything reloadBoard()
 // would (no re-render, so terminals are untouched).
-let liveStatsPollTimer = null;
 let agentActivityPollTimer = null;
+let activityRevisions = new Map();
+let statsRefreshTimer = null;
+let statsRefreshInFlight = false;
+let statsRefreshPending = false;
+const ACTIVITY_STATS_SETTLE_MS = 5000;
 
 function patchAgentActivityDots(){
   state.agentActivityEls.forEach(({ticketKey, dot}) => {
@@ -94,12 +99,19 @@ function patchAgentActivityDots(){
 // above. Poll it quickly enough for the dot to follow actual PTY activity and
 // patch the already-mounted rows without disturbing an open xterm instance.
 export async function pollAgentActivity(){
+  if (document.hidden) return;
   const generation = state.boardGeneration;
   try {
     const response = await apiJson("/api/running-processes");
     if (generation !== state.boardGeneration || !response || !response.ok) return;
     state.runningProcesses = new Set(response.running || []);
     state.workingProcesses = new Set(response.working || []);
+    const nextRevisions = new Map(Object.entries(response.activity || {}).map(([key, value]) => [key, Number(value) || 0]));
+    const hasNewActivity = [...nextRevisions].some(([key, revision]) =>
+      revision > (activityRevisions.has(key) ? activityRevisions.get(key) : 0)
+    );
+    activityRevisions = nextRevisions;
+    if (hasNewActivity) scheduleActivityStatsRefresh();
     patchAgentActivityDots();
     if (!state.runningProcesses.size && !state.liveTerminalCount) stopAgentActivityPoll();
   } catch (e) { /* next tick retries */ }
@@ -119,11 +131,18 @@ export function stopAgentActivityPoll(){
   patchAgentActivityDots();
 }
 
-export async function pollLiveTicketStats(){
+export async function pollLiveTicketStats({refreshCosts=false}={}){
+  if (document.hidden) return;
+  if (statsRefreshInFlight){
+    if (refreshCosts) statsRefreshPending = true;
+    return;
+  }
   const generation = state.boardGeneration;
+  statsRefreshInFlight = true;
   try {
-    const [costsRes, memUsageRes, processRes] = await Promise.all([
-      apiJson("/api/ticket-costs"), apiJson("/api/ticket-memory-usage"), apiJson("/api/running-processes")
+    const [costsRes, memUsageRes] = await Promise.all([
+      apiJson("/api/ticket-costs" + (refreshCosts ? "?refresh=true" : "")),
+      apiJson("/api/ticket-memory-usage")
     ]);
     if (generation !== state.boardGeneration) return; // badges would be the previous workspace's
     if (costsRes && costsRes.ok){
@@ -148,28 +167,39 @@ export async function pollLiveTicketStats(){
         entry.renderDetail(usage);
       });
     }
-    if (processRes && processRes.ok){
-      const newRunning = new Set(processRes.running || []);
-      if (newRunning.size !== state.runningProcesses.size || [...newRunning].some(k => !state.runningProcesses.has(k))){
-        state.runningProcesses = newRunning;
-        // Same rule reloadBoard() follows: a re-render rebuilds every row from
-        // scratch, which would kill any open terminal's live WebSocket/PTY along
-        // with it. Skip the rebuild while one is open — the badge just catches up
-        // on the next tick after it closes.
-        if (state.liveTerminalCount === 0) renderTickets(state.lastTicketDocs, state.lastDbRef);
-      }
+  } catch (e) { /* the next activity edge retries */ }
+  finally {
+    statsRefreshInFlight = false;
+    if (statsRefreshPending){
+      statsRefreshPending = false;
+      scheduleActivityStatsRefresh();
     }
-  } catch (e) { /* next tick retries */ }
+  }
 }
 
 export function startLiveStatsPoll(){
-  if (liveStatsPollTimer) return;
-  liveStatsPollTimer = setInterval(pollLiveTicketStats, 15000);
+  // Kept as the terminal lifecycle hook. Expensive stats are now queued by actual
+  // PTY output revisions in pollAgentActivity(), not by an unconditional timer.
 }
 
 export function stopLiveStatsPoll(){
-  if (!liveStatsPollTimer) return;
-  clearInterval(liveStatsPollTimer);
-  liveStatsPollTimer = null;
+  // Do not cancel a refresh already earned by agent output: it writes the durable
+  // spend snapshot even if the user collapses the terminal immediately afterward.
 }
 state.stopLiveStatsPoll = stopLiveStatsPoll;
+
+function scheduleActivityStatsRefresh(){
+  if (document.hidden) return;
+  // Debounce until output settles. A throttle would still run codeburn repeatedly during
+  // a long streaming turn—the exact moment CPU belongs to the agent, not accounting.
+  clearTimeout(statsRefreshTimer);
+  statsRefreshTimer = setTimeout(async () => {
+    statsRefreshTimer = null;
+    await pollLiveTicketStats({refreshCosts:true});
+  }, ACTIVITY_STATS_SETTLE_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  pollAgentActivity();
+});

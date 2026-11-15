@@ -8,6 +8,12 @@ row per session id is exactly what a ticket's own claudeSessionId needs to key a
 """
 import json
 import subprocess
+import threading
+
+
+_cache_lock = threading.Lock()
+_cached_signature = None
+_cached_rows: dict[str, dict] | None = None
 
 
 def get_session_costs() -> dict[str, dict]:
@@ -21,3 +27,28 @@ def get_session_costs() -> dict[str, dict]:
     )
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows}
+
+
+def get_session_costs_cached(transcript_signature: tuple) -> tuple[dict[str, dict], bool]:
+    """Return codeburn's session rows, rescanning only when a TT transcript changed.
+
+    The caller supplies a cheap tuple of ticket-linked transcript size/mtime values.  This
+    deliberately does not pretend codeburn itself is cheap: unchanged signatures reuse the
+    last parsed result, while a real agent write invalidates it.  The bool says whether this
+    call performed the scan, which is useful to API/UI observability and tests.
+    """
+    global _cached_signature, _cached_rows
+    with _cache_lock:
+        if _cached_rows is not None and transcript_signature == _cached_signature:
+            return _cached_rows, False
+        rows = get_session_costs()
+        _cached_signature = transcript_signature
+        _cached_rows = rows
+        return rows, True
+
+
+def clear_cache() -> None:
+    global _cached_signature, _cached_rows
+    with _cache_lock:
+        _cached_signature = None
+        _cached_rows = None

@@ -4,6 +4,9 @@
 import { el } from "./dom-utils.js";
 import { apiJson } from "./api.js";
 
+const RANGE_STORAGE_KEY = "wmp.insightsRange";
+const DEFAULT_PRESET = "last30";
+
 function fmtUsd(n){
   return "$" + (Number(n) || 0).toFixed(2);
 }
@@ -55,6 +58,39 @@ function section(title, help, contentEl){
   if (help) wrap.appendChild(el("div", "insightshelp", help));
   wrap.appendChild(contentEl);
   return wrap;
+}
+
+function renderProductivity(data){
+  const grid = el("div", "productivitygrid");
+  const card = (label, value, meta) => {
+    const item = el("div", "productivitycard");
+    item.appendChild(el("div", "productivitylabel", label));
+    item.appendChild(el("div", "productivityvalue", value));
+    item.appendChild(el("div", "productivitymeta", meta));
+    grid.appendChild(item);
+  };
+  const outcomes = (Number(data.completed) || 0) + (Number(data.awaitingApproval) || 0);
+  card("Tickets worked", fmtNum(data.ticketsWorked), fmtNum(data.sessions) + " agent sessions");
+  card(
+    "Current outcomes", fmtNum(outcomes),
+    fmtNum(data.completed) + " done · " + fmtNum(data.awaitingApproval) + " awaiting approval"
+  );
+  card(
+    "Linked delivery", fmtNum(data.changeRequests),
+    fmtNum(data.deliveryTickets) + " tickets with PR / MR evidence"
+  );
+  card(
+    "Agent spend", fmtUsd(data.totalCost),
+    fmtUsd(data.costPerTicket) + " / ticket · " + fmtUsd(data.medianSessionCost) + " median session"
+  );
+  const wrap = document.createDocumentFragment();
+  wrap.appendChild(grid);
+  wrap.appendChild(el("div", "productivitynote", "Human time saved is intentionally not shown until hands-on attention is measured."));
+  return section(
+    "Measured productivity",
+    "Directly observed Ticket Terminal records for this window. Current outcomes use each ticket's present status; no time-saved estimate is inferred.",
+    wrap
+  );
 }
 
 function renderVendorModel(data){
@@ -109,13 +145,17 @@ function renderMemory(rows){
     rows.slice(0, 20).map(r => [r.id, fmtNum(r.readByTickets), fmtNum(r.chars)])
   );
   return section(
-    "Memory structure", "Files that are both heavily read and large cost real input tokens on every session that touches them.",
+    "Memory structure · all time", "Memory reads do not carry timestamps yet, so this structural view remains lifetime even when usage is filtered.",
     memTable
   );
 }
 
-function renderOptimize(optimize){
+function renderOptimize(optimize, lifetimeOnly){
   const wrap = el("div");
+  if (lifetimeOnly){
+    wrap.appendChild(el("div", "empty-state", "codeburn's optimization findings are lifetime-only. Switch the usage window to All time to show them without mixing lifetime dollar estimates into this period."));
+    return section("codeburn's own findings · all time", null, wrap);
+  }
   if (!optimize){
     wrap.appendChild(el("div", "empty-state", "codeburn isn't installed, or `codeburn optimize` failed — this section needs it on PATH."));
     return section("codeburn's own findings", null, wrap);
@@ -144,13 +184,98 @@ function renderOptimize(optimize){
   return section("codeburn's own findings", "Reused directly from `codeburn optimize` — not reimplemented here.", wrap);
 }
 
+function dateValue(date){
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return year + "-" + month + "-" + day;
+}
+
+function localMidnight(value){
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addDays(date, amount){
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
+function readRangePreference(){
+  try {
+    return {...JSON.parse(localStorage.getItem(RANGE_STORAGE_KEY) || "{}")};
+  } catch (_) {
+    return {};
+  }
+}
+
+function selectedRange(){
+  const preset = document.getElementById("insightsRangePreset").value || DEFAULT_PRESET;
+  const today = localMidnight(dateValue(new Date()));
+  const end = addDays(today, 1);
+  let start = null;
+  if (preset === "last7") start = addDays(today, -6);
+  if (preset === "week"){
+    const thisWeekStart = addDays(today, -((today.getDay() + 6) % 7));
+    start = addDays(thisWeekStart, -7);
+    return {preset, start:start.toISOString(), end:thisWeekStart.toISOString()};
+  }
+  if (preset === "last30") start = addDays(today, -29);
+  if (preset === "month") start = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (preset === "custom"){
+    const startValue = document.getElementById("insightsStartDate").value;
+    const endValue = document.getElementById("insightsEndDate").value;
+    if (!startValue || !endValue) throw new Error("Choose both dates for the custom range.");
+    start = localMidnight(startValue);
+    const customEnd = addDays(localMidnight(endValue), 1); // “Through” is inclusive.
+    if (start >= customEnd) throw new Error("The start date must be on or before the end date.");
+    return {preset, start:start.toISOString(), end:customEnd.toISOString(), startValue, endValue};
+  }
+  if (preset === "all") return {preset, start:null, end:null};
+  return {preset, start:start.toISOString(), end:end.toISOString()};
+}
+
+function insightsPath(range){
+  const params = new URLSearchParams();
+  if (range.start) params.set("start", range.start);
+  if (range.end) params.set("end", range.end);
+  return "/api/insights" + (params.size ? "?" + params.toString() : "");
+}
+
+function saveRange(range){
+  localStorage.setItem(RANGE_STORAGE_KEY, JSON.stringify({
+    preset: range.preset,
+    startValue: range.startValue || document.getElementById("insightsStartDate").value,
+    endValue: range.endValue || document.getElementById("insightsEndDate").value,
+  }));
+}
+
+function rangeSummary(data, range){
+  const count = Number(data.ledgerEntryCount) || 0;
+  const total = Number(data.totalLedgerEntryCount) || 0;
+  if (!range.start && !range.end) return count + " sessions · all recorded history";
+  return count + " of " + total + " sessions in selected window";
+}
+
 async function load(){
   const body = document.getElementById("insightsBody");
+  const summary = document.getElementById("insightsRangeSummary");
   body.innerHTML = "";
   body.appendChild(el("div", "empty-state", "Loading…"));
+  summary.textContent = "";
+  let range;
+  try {
+    range = selectedRange();
+    saveRange(range);
+  } catch (e) {
+    body.innerHTML = "";
+    body.appendChild(el("div", "empty-state", e.message));
+    return;
+  }
   let res;
   try {
-    res = await apiJson("/api/insights");
+    res = await apiJson(insightsPath(range));
   } catch (e) {
     body.innerHTML = "";
     body.appendChild(el("div", "empty-state", "Couldn't load insights: " + e.message));
@@ -163,13 +288,45 @@ async function load(){
   }
   const data = res.data;
   body.innerHTML = "";
+  summary.textContent = rangeSummary(data, range);
   if (!data.ledgerEntryCount){
     body.appendChild(el("div", "empty-state", "No session-cost history yet — this fills in once a ticket's terminal session has actually done something (running or closed, either counts)."));
   }
+  body.appendChild(renderProductivity(data.productivity));
   body.appendChild(renderVendorModel(data.vendorModel));
   body.appendChild(renderCaching(data.caching));
   body.appendChild(renderMemory(data.memory));
-  body.appendChild(renderOptimize(data.codeburnOptimize));
+  body.appendChild(renderOptimize(data.codeburnOptimize, data.codeburnOptimizeLifetimeOnly));
+}
+
+async function applyRange(){
+  const button = document.getElementById("insightsApplyRangeBtn");
+  button.disabled = true;
+  button.textContent = "Applying…";
+  try {
+    await load();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Apply";
+  }
+}
+
+async function refreshCosts(){
+  const button = document.getElementById("insightsRefreshBtn");
+  const body = document.getElementById("insightsBody");
+  button.disabled = true;
+  button.textContent = "Refreshing costs…";
+  try {
+    const result = await apiJson("/api/insights/refresh", {method:"POST"});
+    if (!result.ok) throw new Error(result.error || "refresh failed");
+    await load();
+  } catch (e) {
+    body.innerHTML = "";
+    body.appendChild(el("div", "empty-state", "Couldn't refresh insights: " + e.message));
+  } finally {
+    button.disabled = false;
+    button.textContent = "⟳ Refresh";
+  }
 }
 
 export async function renderInsightsPage(){
@@ -177,6 +334,21 @@ export async function renderInsightsPage(){
   // times in one session (hashchange back and forth), and renderInsightsPage runs fresh each
   // time against the same static button — assignment overwrites the handler instead of
   // stacking a duplicate one per visit.
-  document.getElementById("insightsRefreshBtn").onclick = load;
+  const preset = document.getElementById("insightsRangePreset");
+  const custom = document.getElementById("insightsCustomRange");
+  const startInput = document.getElementById("insightsStartDate");
+  const endInput = document.getElementById("insightsEndDate");
+  const saved = readRangePreference();
+  const today = localMidnight(dateValue(new Date()));
+  preset.value = ["last7", "week", "last30", "month", "all", "custom"].includes(saved.preset) ? saved.preset : DEFAULT_PRESET;
+  startInput.value = saved.startValue || dateValue(addDays(today, -29));
+  endInput.value = saved.endValue || dateValue(today);
+  custom.classList.toggle("hidden", preset.value !== "custom");
+  preset.onchange = () => {
+    custom.classList.toggle("hidden", preset.value !== "custom");
+    if (preset.value !== "custom") load();
+  };
+  document.getElementById("insightsApplyRangeBtn").onclick = applyRange;
+  document.getElementById("insightsRefreshBtn").onclick = refreshCosts;
   await load();
 }

@@ -59,6 +59,8 @@ class ChangeRequestParserTests(unittest.TestCase):
 class ChangeRequestEndpointTests(unittest.TestCase):
     def setUp(self):
         self.workspaces = TempWorkspaces().start()
+        main._change_request_scan_cache.clear()
+        main._change_request_response_cache.clear()
 
     def tearDown(self):
         self.workspaces.stop()
@@ -79,6 +81,28 @@ class ChangeRequestEndpointTests(unittest.TestCase):
         with patch.object(main.db, "read", return_value={"jiraTickets": {}}):
             result = main.refresh_ticket_change_requests("missing")
         self.assertFalse(result["ok"])
+
+    def test_unchanged_transcript_is_not_rescanned(self):
+        transcript = self.workspaces.root / "session.jsonl"
+        transcript.write_text("first")
+        ticket = {"claudeSessionId": "sid"}
+        discovered = [{"url": "https://github.com/acme/repo/pull/1", "source": "transcript"}]
+        with patch.object(main.db, "read", return_value={"jiraTickets": {"T-1": ticket}}), \
+             patch.object(main, "_ticket_session_log", side_effect=lambda _ticket, provider: transcript if provider == "claude" else None), \
+             patch.object(main.change_requests, "read_change_requests", side_effect=lambda path, _provider: discovered if path else []) as read:
+            first = main._refresh_ticket_change_requests("T-1")
+            second = main._refresh_ticket_change_requests("T-1")
+            transcript.write_text("changed and longer")
+            third = main._refresh_ticket_change_requests("T-1")
+        self.assertTrue(first["ok"] and second["ok"] and third["ok"])
+        self.assertEqual(read.call_count, 3, "Claude scans twice; the absent Codex transcript is scanned only once")
+
+    def test_duplicate_poll_responses_are_coalesced_before_reading_db(self):
+        result = {"ok": True, "changeRequests": []}
+        with patch.object(main, "_refresh_ticket_change_requests", return_value=result) as refresh:
+            self.assertEqual(main.refresh_ticket_change_requests("T-1"), result)
+            self.assertEqual(main.refresh_ticket_change_requests("T-1"), result)
+        refresh.assert_called_once_with("T-1")
 
 
 if __name__ == "__main__":

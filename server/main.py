@@ -68,6 +68,7 @@ TRACKER_SYNC_INTERVAL_SECONDS = 600  # 10 minutes, for every configured tracker 
 # UI's "working" signal alive across a couple of missed browser polls without
 # equating the much longer-lived process itself with active work.
 AGENT_ACTIVITY_WINDOW_SECONDS = 3.0
+IDLE_REAPER_INTERVAL_SECONDS = 60
 
 app = FastAPI()
 
@@ -210,10 +211,90 @@ async def workspace_sync_if_stale(slug: str):
 # Processes stay alive even after WebSocket closes, so users can reconnect to them.
 running_processes = {}
 processes_lock = threading.Lock()
+_idle_reaper_task = None
+_change_request_scan_cache: dict[tuple[str, str, str], tuple[tuple | None, list[dict]]] = {}
+_change_request_scan_lock = threading.Lock()
+_change_request_response_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+_ticket_cost_response_cache: dict[str, tuple[tuple, dict]] = {}
+_ticket_cost_response_lock = threading.Lock()
 
 
 def process_key_for(key: str, provider: str, slug: str | None = None) -> str:
     return f"{slug or workspaces.current()}|{provider}|{key}"
+
+
+def _file_signature(path: Path) -> tuple[str, int, int] | None:
+    """Cheap cache key for workspace JSON snapshots read by hot polling endpoints."""
+    try:
+        stat = path.stat()
+        return str(path), stat.st_size, stat.st_mtime_ns
+    except OSError:
+        return None
+
+
+def _ticket_cost_snapshot_signature() -> tuple:
+    return (
+        _file_signature(db.db_path()),
+        _file_signature(content.data_dir() / "spend-ledger.json"),
+    )
+
+
+def _idle_timeout_minutes() -> int:
+    try:
+        return max(0, min(10_080, int(settings_store.read().get("agentIdleTimeoutMinutes") or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def reap_idle_processes(now: float | None = None) -> list[str]:
+    """Stop detached agent CLIs after the workspace's optional idle timeout.
+
+    Connected terminals are never reaped.  The clock starts when the browser detaches and is
+    extended by genuine prompt/output activity, so enabling this cannot kill an agent that is
+    visibly working merely because its process itself is old.
+    """
+    now = time.monotonic() if now is None else now
+    candidates: list[tuple[str, dict]] = []
+    with processes_lock:
+        for registry_key, info in list(running_processes.items()):
+            slug = registry_key.split("|", 1)[0]
+            with workspaces.use(slug):
+                timeout = _idle_timeout_minutes() * 60
+            if not timeout or info.get("ws") is not None:
+                continue
+            last_activity = max(
+                info.get("started_at") or 0, info.get("detached_at") or 0,
+                info.get("last_input_at") or 0, info.get("last_output_at") or 0,
+            )
+            if last_activity and now - last_activity >= timeout:
+                candidates.append((registry_key, running_processes.pop(registry_key)))
+    stopped = []
+    for registry_key, info in candidates:
+        slug = registry_key.split("|", 1)[0]
+        with workspaces.use(slug):
+            _terminate_process(registry_key, info, "idle-timeout")
+        stopped.append(_wire_process_key(registry_key))
+    return stopped
+
+
+async def _idle_reaper_loop():
+    while True:
+        await asyncio.sleep(IDLE_REAPER_INTERVAL_SECONDS)
+        await asyncio.to_thread(reap_idle_processes)
+
+
+@app.on_event("startup")
+async def _start_idle_reaper():
+    global _idle_reaper_task
+    _idle_reaper_task = asyncio.create_task(_idle_reaper_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_idle_reaper():
+    global _idle_reaper_task
+    if _idle_reaper_task:
+        _idle_reaper_task.cancel()
+        _idle_reaper_task = None
 
 
 # The ticket trackers this board can mirror. Each module exposes the same
@@ -562,6 +643,7 @@ def get_settings():
         },
         "memoryDir": str(mem_info["path"]),
         "memoryDirSource": mem_info["source"],
+        "agentIdleTimeoutMinutes": _idle_timeout_minutes(),
     }
 
 
@@ -579,7 +661,13 @@ def put_settings(body: dict = Body(...)):
     means the sprint is running?" themselves, so it is recorded as confirmed
     and inference stops overwriting it; sending it blank clears both fields
     and hands the question back to inference."""
-    notion_patch = (body or {}).get("notion") or {}
+    body = dict(body or {})
+    if "agentIdleTimeoutMinutes" in body:
+        try:
+            body["agentIdleTimeoutMinutes"] = max(0, min(10_080, int(body["agentIdleTimeoutMinutes"] or 0)))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "idle timeout must be a number of minutes"}
+    notion_patch = body.get("notion") or {}
     notion_patch.pop("sprintActiveMarkerSource", None)  # server-owned flag: only the marker branch below may set it
     settings_store.update(body)
     if "sprintActiveMarker" in notion_patch:
@@ -812,13 +900,31 @@ def get_jira_statuses():
 
 
 @app.get("/api/ticket-costs")
-def get_ticket_costs():
+def get_ticket_costs(refresh: bool = False):
     """Per-session cost from the real codeburn CLI, keyed by claudeSessionId — see
     cost_analysis.get_session_costs for why this shells out instead of reimplementing
     codeburn's pricing logic."""
     try:
-        costs = cost_analysis.get_session_costs()
-        for key, ticket in db.read()["jiraTickets"].items():
+        workspace = workspaces.current()
+        if not refresh:
+            signature = _ticket_cost_snapshot_signature()
+            with _ticket_cost_response_lock:
+                cached = _ticket_cost_response_cache.get(workspace)
+                if cached and cached[0] == signature:
+                    return cached[1]
+        tickets = db.read()["jiraTickets"]
+        scanned = False
+        if refresh:
+            costs, scanned = cost_analysis.get_session_costs_cached(_ticket_transcript_signature(tickets))
+            spend_ledger.sync_from_costs(tickets, costs)
+        else:
+            # Board loads are reads over the durable snapshot.  Only real transcript
+            # activity (the browser calls ?refresh=true) or the explicit Insights refresh
+            # launches codeburn.
+            costs = {str(row.get("sessionId")): row for row in spend_ledger.read_entries()
+                     if row.get("sessionId")}
+        ticket_costs = {}
+        for key, ticket in tickets.items():
             for provider in ("claude", "codex"):
                 sid = ticket.get(provider + "SessionId")
                 if provider == "codex" and not sid and ticket.get("codexSessionMarker"):
@@ -826,8 +932,14 @@ def get_ticket_costs():
                     if sid:
                         db.update_ticket(key, {"codexSessionId": sid})
                 if sid and sid in costs:
-                    costs[provider + ":" + key] = {**costs[sid], "provider": provider}
-        return {"ok": True, "costs": costs}
+                    ticket_costs[provider + ":" + key] = {**costs[sid], "provider": provider}
+        result = {"ok": True, "costs": ticket_costs, "scanned": scanned}
+        # A refresh can rewrite the ledger; capture the resulting signature so both old
+        # tabs and new activity-driven clients get an O(1) read on the next board poll.
+        cached_result = {**result, "scanned": False}
+        with _ticket_cost_response_lock:
+            _ticket_cost_response_cache[workspace] = (_ticket_cost_snapshot_signature(), cached_result)
+        return result
     except FileNotFoundError:
         return {"ok": False, "error": "codeburn is not installed (npm install -g codeburn)"}
     except subprocess.CalledProcessError as e:
@@ -936,6 +1048,25 @@ def _ticket_session_log(ticket: dict, provider: str):
     return memory_analysis.codex_transcript_path(session_id)
 
 
+def _path_signature(path: Path | None) -> tuple[int, int] | None:
+    try:
+        stat = path.stat() if path else None
+        return (stat.st_size, stat.st_mtime_ns) if stat else None
+    except OSError:
+        return None
+
+
+def _ticket_transcript_signature(tickets: dict) -> tuple:
+    """Cheap invalidation key for the codeburn cache: only TT-linked transcripts."""
+    return tuple(sorted(
+        (key, provider, str(ticket.get(provider + "SessionId") or ""),
+         _path_signature(_ticket_session_log(ticket, provider)))
+        for key, ticket in tickets.items()
+        for provider in ("claude", "codex")
+        if ticket.get(provider + "SessionId")
+    ))
+
+
 def _manager_summary_signature(ticket: dict, provider: str, log_path: Path | None) -> str:
     if log_path and log_path.exists():
         stat = log_path.stat()
@@ -979,8 +1110,7 @@ def generate_manager_summary(key: str, provider: str = "claude", refresh: bool =
         return {"ok": False, "error": str(e)}
 
 
-@app.post("/api/tickets/{key}/change-requests/refresh")
-def refresh_ticket_change_requests(key: str):
+def _refresh_ticket_change_requests(key: str):
     """Discover and durably materialize PR/MR links from structured sessions.
 
     This is an explicit POST because discovery can add records to the ticket.
@@ -994,7 +1124,22 @@ def refresh_ticket_change_requests(key: str):
     discovered = []
     try:
         for provider in ("claude", "codex"):
-            discovered.extend(change_requests.read_change_requests(_ticket_session_log(ticket, provider), provider))
+            log_path = _ticket_session_log(ticket, provider)
+            signature = (
+                str(ticket.get(provider + "SessionId") or ""),
+                str(log_path or ""),
+                _path_signature(log_path),
+            )
+            cache_key = (workspaces.current(), key, provider)
+            with _change_request_scan_lock:
+                cached = _change_request_scan_cache.get(cache_key)
+            if cached and cached[0] == signature:
+                provider_links = cached[1]
+            else:
+                provider_links = change_requests.read_change_requests(log_path, provider)
+                with _change_request_scan_lock:
+                    _change_request_scan_cache[cache_key] = (signature, provider_links)
+            discovered.extend(provider_links)
         merged = change_requests.merge_change_requests(stored, legacy, discovered)
         if merged != stored:
             db.update_ticket(key, {"changeRequests": merged})
@@ -1003,15 +1148,52 @@ def refresh_ticket_change_requests(key: str):
         return {"ok": False, "error": str(e), "changeRequests": change_requests.merge_change_requests(stored, legacy)}
 
 
+@app.post("/api/tickets/{key}/change-requests/refresh")
+def refresh_ticket_change_requests(key: str):
+    """Coalesce duplicate expanded-row/tab polling before it reparses db.json.
+
+    Transcript-level caching inside the helper guarantees the actual session scan only runs
+    after size/mtime changes. This short response cache also protects the server from older
+    already-open browser tabs that still carry the former four-second timer.
+    """
+    cache_key = (workspaces.current(), key)
+    now = time.monotonic()
+    with _change_request_scan_lock:
+        cached = _change_request_response_cache.get(cache_key)
+        if cached and now - cached[0] < 10:
+            return cached[1]
+    result = _refresh_ticket_change_requests(key)
+    with _change_request_scan_lock:
+        _change_request_response_cache[cache_key] = (time.monotonic(), result)
+    return result
+
+
+@app.post("/api/insights/refresh")
+def refresh_insights():
+    """Explicitly refresh the durable cost snapshot and lifetime diagnostics.
+
+    Date-window changes never call this: they remain cheap reads over spend-ledger.json.
+    """
+    try:
+        tickets = db.read()["jiraTickets"]
+        result = spend_ledger.sync_from_costs(tickets)
+        workflow_insights.clear_diagnostic_cache()
+        return {"ok": True, **result}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/insights")
-def get_insights():
+def get_insights(start: str | None = None, end: str | None = None):
     """Cost/performance/caching dashboard data — see workflow_insights.compute_insights. Pure
     computation over the spend ledger + codeburn + existing memory-usage stats; never calls an
     LLM."""
     try:
         tickets = db.read()["jiraTickets"]
         live_entries = _live_spend_entries()
-        return {"ok": True, "data": workflow_insights.compute_insights(tickets, DEFAULT_WORKDIR, live_entries)}
+        return {"ok": True, "data": workflow_insights.compute_insights(
+            tickets, DEFAULT_WORKDIR, live_entries, start=start, end=end,
+        )}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -1195,10 +1377,12 @@ def get_running_processes():
             if now - running_processes[k].get("last_output_at", float("-inf"))
             <= AGENT_ACTIVITY_WINDOW_SECONDS
         ]
+        activity = {_wire_process_key(k): running_processes[k].get("activity_revision", 0) for k in keys}
     return {
         "ok": True,
         "running": [_wire_process_key(k) for k in keys],
         "working": [_wire_process_key(k) for k in working],
+        "activity": activity,
     }
 
 
@@ -1214,10 +1398,10 @@ def _live_spend_entries() -> list[dict]:
         keys = [k for k in running_processes if k.startswith(prefix)]
     if not keys:
         return []
-    try:
-        costs = cost_analysis.get_session_costs()
-    except Exception:
-        return []
+    # Fresh activity snapshots are materialized by /api/ticket-costs?refresh=true.
+    # Reading Insights must not launch a full codeburn scan of the workstation.
+    costs = {str(row.get("sessionId")): row for row in spend_ledger.read_entries()
+             if row.get("sessionId")}
     tickets = db.read()["jiraTickets"]
     entries = []
     for registry_key in keys:
@@ -1233,6 +1417,7 @@ def _live_spend_entries() -> list[dict]:
             "calls": row.get("calls", 0), "turns": row.get("turns", 0),
             "inputTokens": row.get("inputTokens", 0), "outputTokens": row.get("outputTokens", 0),
             "cacheReadTokens": row.get("cacheReadTokens", 0), "cacheWriteTokens": row.get("cacheWriteTokens", 0),
+            "startedAt": row.get("startedAt"), "endedAt": row.get("endedAt"),
             "durationMs": row.get("durationMs"),
             "categories": ticket.get("categories") or [], "priority": ticket.get("jiraPriority") or "",
         })
@@ -1439,6 +1624,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 info = running_processes.get(process_key, {})
                 if info.get("activity_armed"):
                     info["last_output_at"] = time.monotonic()
+                    info["activity_revision"] = info.get("activity_revision", 0) + 1
             draft_bytes = terminal_draft.draft_when_ready(info, data)
             if draft_bytes:
                 try:
@@ -1512,12 +1698,16 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
             resize = proc.resize if bridged else (lambda rows, cols, fd=master_fd: agent_launch.set_winsize(fd, rows, cols))
 
             # Register this process as running in the background
-            running_processes[process_key] = {"proc": proc, "master_fd": master_fd, "resize": resize, "draft": pending_draft}
+            running_processes[process_key] = {
+                "proc": proc, "master_fd": master_fd, "resize": resize, "draft": pending_draft,
+                "started_at": time.monotonic(), "activity_revision": 0,
+            }
 
         # Claim ownership right here, atomically with the check above.
         reader_task = asyncio.create_task(read_pty())
         running_processes[process_key]["reader_task"] = reader_task
         running_processes[process_key]["ws"] = websocket
+        running_processes[process_key]["detached_at"] = None
 
     if stale_reader_task is not None or stale_ws is not None:
         # A previous connection for this same ticket was still holding the PTY —
@@ -1576,6 +1766,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                                 info = running_processes.get(process_key)
                                 if info:
                                     info["activity_armed"] = True
+                                    info["last_input_at"] = time.monotonic()
                             os.write(master_fd, (prompt + "\n").encode())
                         except OSError:
                             pass
@@ -1588,6 +1779,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                             info = running_processes.get(process_key)
                             if info:
                                 info["activity_armed"] = True
+                                info["last_input_at"] = time.monotonic()
                     os.write(master_fd, input_data.encode())
                 except OSError:
                     pass
@@ -1612,6 +1804,7 @@ async def terminal_ws(websocket: WebSocket, key: str, provider: str = "claude"):
                 if proc_info.get("reader_task") is reader_task:
                     proc_info["reader_task"] = None
                     proc_info["ws"] = None
+                    proc_info["detached_at"] = time.monotonic()
                 # Clean up dead processes
                 if proc_info["proc"].poll() is not None:
                     running_processes.pop(process_key, None)
