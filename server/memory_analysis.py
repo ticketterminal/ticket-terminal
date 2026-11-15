@@ -14,11 +14,16 @@ import glob
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 import yaml
 
 import settings_store
+
+
+_usage_cache: dict[tuple[str, str], tuple[tuple, dict[str, int]]] = {}
+_usage_cache_lock = threading.Lock()
 
 
 def claude_project_dir(cwd: str) -> Path:
@@ -165,6 +170,13 @@ def session_memory_usage(cwd: str, session_id: str) -> dict[str, int]:
         return {}
     ids = _memory_ids()
     memory_dir = _memory_dir()
+    stat = log_path.stat()
+    signature = (stat.st_size, stat.st_mtime_ns, str(memory_dir), tuple(sorted(ids)))
+    cache_key = ("claude", str(log_path))
+    with _usage_cache_lock:
+        cached = _usage_cache.get(cache_key)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
     counts: dict[str, int] = {}
     with open(log_path) as f:
         for line in f:
@@ -184,6 +196,8 @@ def session_memory_usage(cwd: str, session_id: str) -> dict[str, int]:
                 p = Path(file_path)
                 if p.parent == memory_dir and p.stem in ids:
                     counts[p.stem] = counts.get(p.stem, 0) + 1
+    with _usage_cache_lock:
+        _usage_cache[cache_key] = (signature, dict(counts))
     return counts
 
 
@@ -206,13 +220,27 @@ def codex_session_memory_usage(session_id: str) -> dict[str, int]:
         return {}
     ids = _memory_ids()
     memory_dir = _memory_dir()
+    stat = log_path.stat()
+    signature = (stat.st_size, stat.st_mtime_ns, str(memory_dir), tuple(sorted(ids)))
+    cache_key = ("codex", str(log_path))
+    with _usage_cache_lock:
+        cached = _usage_cache.get(cache_key)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
     counts: dict[str, int] = {}
     with open(log_path) as f:
         for line in f:
             for memory_id in ids:
                 if str(memory_dir / f"{memory_id}.md") in line:
                     counts[memory_id] = counts.get(memory_id, 0) + 1
+    with _usage_cache_lock:
+        _usage_cache[cache_key] = (signature, dict(counts))
     return counts
+
+
+def clear_usage_cache() -> None:
+    with _usage_cache_lock:
+        _usage_cache.clear()
 
 
 def all_ticket_memory_usage(tickets: dict, default_workdir: str) -> dict[str, dict[str, int]]:

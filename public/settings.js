@@ -20,6 +20,7 @@ const jiraFormEl = document.getElementById("settingsJiraForm");
 const assigneesFormEl = document.getElementById("settingsAssigneesForm");
 const notionFormEl = document.getElementById("settingsNotionForm");
 const memoryFormEl = document.getElementById("settingsMemoryForm");
+const resourceFormEl = document.getElementById("settingsResourceForm");
 
 const STATUS_OPTIONS = ["covered", "partial", "gap"];
 
@@ -373,6 +374,54 @@ async function renderMemoryForm(flash){
       showMsg(msg, "Couldn't save: " + e.message, "err");
     } finally {
       saveBtn.disabled = false;
+    }
+  });
+}
+
+async function renderResourceForm(flash){
+  if (!resourceFormEl) return;
+  resourceFormEl.innerHTML = "Loading…";
+  const settings = await apiJson("/api/settings").catch(() => null);
+  resourceFormEl.innerHTML = "";
+  if (!settings){
+    resourceFormEl.appendChild(el("div", "empty-state", "Couldn't load resource settings."));
+    return;
+  }
+  resourceFormEl.appendChild(el("p", "sub",
+    "Ticket Terminal now refreshes cost and memory data only after real agent output, caches unchanged transcripts, and pauses polling while this tab is hidden."));
+  const timeout = document.createElement("input");
+  timeout.type = "number";
+  timeout.min = "0";
+  timeout.max = "10080";
+  timeout.step = "1";
+  timeout.value = String(settings.agentIdleTimeoutMinutes || 0);
+  resourceFormEl.appendChild(buildSettingsRow("Stop detached agents after idle minutes", timeout));
+  resourceFormEl.appendChild(el("div", "settingshint",
+    "0 keeps detached sessions alive indefinitely. A positive value stops only terminals that are disconnected and have produced no new work for that long; an open terminal is never auto-stopped."));
+  const actions = el("div", "settingsactions");
+  const save = el("button", "refreshbtn", "Save resource policy");
+  save.type = "button";
+  const msg = el("span", "settingsmsg", "");
+  if (flash) showMsg(msg, flash.text, flash.kind);
+  actions.appendChild(save); actions.appendChild(msg);
+  resourceFormEl.appendChild(actions);
+  save.addEventListener("click", async () => {
+    const minutes = Number(timeout.value);
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 10080){
+      showMsg(msg, "Choose a whole number from 0 to 10,080 minutes.", "err");
+      return;
+    }
+    save.disabled = true;
+    showMsg(msg, "Saving…", "");
+    try {
+      const result = await apiJson("/api/settings", {
+        method:"PUT", body:JSON.stringify({agentIdleTimeoutMinutes:minutes}),
+      });
+      if (!result.ok) throw new Error(result.error || "save failed");
+      await renderResourceForm({text:"Saved ✓", kind:"ok"});
+    } catch (error) {
+      showMsg(msg, "Couldn't save: " + error.message, "err");
+      save.disabled = false;
     }
   });
 }
@@ -784,6 +833,7 @@ export async function renderSettingsPage(){
   renderAssigneesForm();
   renderNotionForm();
   renderMemoryForm();
+  renderResourceForm();
 }
 
 export function wireSettingsUI(){

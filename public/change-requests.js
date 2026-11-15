@@ -138,8 +138,9 @@ export function createChangeRequestView(key, data, {compact=false}={}){
     clearInterval(timer);
     timer = setInterval(() => {
       if (!shell.isConnected){ clearInterval(timer); timer = null; return; }
+      if (document.hidden) return;
       refresh();
-    }, 4000);
+    }, 15000);
   }
   function stop(){ clearInterval(timer); timer = null; }
   function dispose(){ disposed = true; stop(); }

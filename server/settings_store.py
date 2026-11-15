@@ -49,6 +49,9 @@ def _empty():
             "sprintActiveMarker": "", "sprintActiveMarkerSource": "",
         },
         "memoryDir": "",
+        # 0 keeps the original "background sessions live forever" behavior. A positive
+        # number stops only detached, inactive agent processes after that many minutes.
+        "agentIdleTimeoutMinutes": 0,
     }
 
 
@@ -92,6 +95,8 @@ def update(patch):
             settings[section][field] = value
     if "memoryDir" in (patch or {}):
         settings["memoryDir"] = patch["memoryDir"]
+    if "agentIdleTimeoutMinutes" in (patch or {}):
+        settings["agentIdleTimeoutMinutes"] = patch["agentIdleTimeoutMinutes"]
     write(settings)
     return settings
 
