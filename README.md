@@ -6,6 +6,8 @@
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ticketterminal/ticket-terminal/badge)](https://scorecard.dev/viewer/?uri=github.com/ticketterminal/ticket-terminal)
 
+[Website](https://ticketterminal.dev) · [Clone and run locally](#clone-and-run-locally) · [Releases](https://github.com/ticketterminal/ticket-terminal/releases)
+
 *Your ticket board, wired directly into the coding agents doing the work.*
 
 Ticket Terminal is a local ticket board where every ticket has a **real embedded terminal**: an
@@ -17,6 +19,25 @@ that you and your agents both read and write.
   <img src="docs/assets/ticket-terminal-demo.gif" alt="Ticket Terminal walkthrough: a ticket opens an embedded Codex terminal and an agent trail showing commands, files, and shared memory used during the session" width="100%">
   <br><sub>Current app mechanics with safe sample data: open a ticket, launch its agent session, and inspect the agent trail.</sub>
 </p>
+
+## Clone and run locally
+
+Ticket Terminal is Apache-2.0, local-first, and uses the Claude Code or Codex CLI
+already signed in on your machine. With Python 3.12 and
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/) installed:
+
+```bash
+git clone https://github.com/ticketterminal/ticket-terminal.git
+cd ticket-terminal
+uv venv && uv pip install --require-hashes -r requirements.txt
+source .venv/bin/activate
+python server/main.py
+```
+
+Open **http://127.0.0.1:4173**. A successful run shows the local board; connect Jira
+or Notion in **Settings**, expand a ticket, and choose **Open Claude** or **Open
+Codex**. For Docker, host-native agent bridging, and the exact trust boundary, see
+the full [Quick start](#quick-start).
 
 <p align="center">
   <img src="docs/assets/screenshot-board.png" alt="The Ticket Terminal board in dark mode: tickets with status, priority, team and cost badges, and one ticket expanded to show an embedded Claude session working on it" width="900">
