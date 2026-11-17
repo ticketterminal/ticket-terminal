@@ -2,10 +2,26 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ticket-terminal",
   "compatibility_date": "2026-09-11",
+  "main": "worker/index.js",
   "observability": {
     "enabled": true
   },
   "assets": {
-    "directory": "docs"
+    "directory": "docs",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/go/reddit-agents/*",
+      "/go/reddit-jira/*",
+      "/api/campaign-stats"
+    ]
+  },
+  "analytics_engine_datasets": [
+    {
+      "binding": "CAMPAIGN_CLICKS",
+      "dataset": "ticket_terminal_campaign_clicks"
+    }
+  ],
+  "analytics": {
+    "binding": "ANALYTICS_SQL"
   }
 }
