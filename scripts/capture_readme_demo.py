@@ -225,6 +225,12 @@ def browser_fixture(stage: int) -> str:
   const stage = {stage};
   const responses = {json.dumps(responses)};
   const terminalText = {json.dumps(TERMINAL_TEXT)};
+  const RealDate = window.Date;
+  const fixedNow = RealDate.parse('2026-10-11T09:16:00Z');
+  window.Date = class extends RealDate {{
+    constructor(...args) {{ super(...(args.length ? args : [fixedNow])); }}
+    static now() {{ return fixedNow; }}
+  }};
   localStorage.setItem('wmp.viewMode', 'grouped');
   localStorage.setItem('wmp.showNested', 'off');
   localStorage.setItem('wmp.hideGettingStarted', '1');
@@ -387,6 +393,7 @@ class ReusableServer(socketserver.TCPServer):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=ROOT / "docs/assets/ticket-terminal-demo.gif")
+    parser.add_argument("--video-output", type=Path, default=ROOT / "docs/assets/ticket-terminal-demo.mp4")
     parser.add_argument("--keep-frames", action="store_true")
     args = parser.parse_args()
     if not CHROME.exists():
@@ -418,6 +425,12 @@ def main() -> None:
             check=True,
         )
         print(args.output)
+        args.video_output.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["swift", str(ROOT / "scripts/assemble_demo_video.swift"), str(args.video_output), *map(str, frames)],
+            check=True,
+        )
+        print(args.video_output)
         if args.keep_frames:
             kept = args.output.parent / "ticket-terminal-demo-frames"
             if kept.exists():
