@@ -149,6 +149,32 @@ AGENT_EVENTS = [
     },
 ]
 
+AGENT_SUMMARY = {
+    "headline": "Work recorded toward “Add retry guard to invoice sync”.",
+    "why": "Retry transient provider failures without hiding permanent failures.",
+    "facts": ["Changed 2 named objects", "Ran 2 verification commands", "Used the shared retry policy"],
+    "flow": [
+        {"id": "investigate", "label": "Investigate", "detail": "Trace the invoice sync failure path", "count": 2},
+        {"id": "knowledge", "label": "Use knowledge", "detail": "Read the shared retry policy", "count": 1},
+        {"id": "change", "label": "Make changes", "detail": "Add capped exponential backoff", "count": 1},
+        {"id": "verify", "label": "Verify", "detail": "Run retry tests and diff checks", "count": 2},
+    ],
+    "objects": [
+        {"type": "file", "label": "server/retry.py", "path": "server/retry.py", "action": "update"},
+        {"type": "file", "label": "tests/test_retry.py", "path": "tests/test_retry.py", "action": "update"},
+    ],
+    "knowledge": [{"type": "memory", "id": "retry-policy", "label": "Retry policy", "path": "memory/retry-policy.md"}],
+}
+
+MANAGER_BRIEF = {
+    "requestedChange": "Make invoice sync resilient to transient provider failures while keeping permanent errors visible.",
+    "architecture": "Jira remains the source of truth. Ticket Terminal runs the local Codex session against the existing sync service and attaches the evidence back to TT-104.",
+    "rationale": "A capped retry policy improves reliability without turning authentication, validation, or other permanent failures into silent delays.",
+    "implementation": "The sync path now classifies provider failures and applies capped exponential backoff only to transient responses. Focused regression tests cover both retryable and permanent cases.",
+    "rollout": "Merge PR #42 after review, deploy through staging, and watch retry volume plus terminal failure counts before production rollout.",
+    "status": "Implementation is ready for review. Twelve retry tests and the repository diff check pass.",
+}
+
 TERMINAL_TEXT = """$ codex --resume demo-codex-session
 Ticket TT-104 · Add retry guard to invoice sync
 
@@ -161,11 +187,11 @@ Ready for review: ticketterminal/ticket-terminal #42
 """
 
 CAPTIONS = [
-    "Tickets stay in Jira or Notion — the board keeps the work visible.",
-    "Open a ticket to see its description, activity, and durable session context.",
-    "Launch Claude or Codex directly inside the ticket.",
-    "Agent trail shows the commands, files, memory, and skills behind the work.",
-    "The terminal, transcript, memory usage, cost, and PR stay attached to the ticket.",
+    "Keep Jira or Notion as the source of truth.",
+    "Open the ticket. Launch the real local Claude or Codex CLI.",
+    "The agent works in your repository, inside the ticket.",
+    "See every memory read, file change, command, test, and PR.",
+    "Turn the trail into a manager-ready brief. Clone it and run locally.",
 ]
 
 
@@ -185,7 +211,12 @@ def browser_fixture(stage: int) -> str:
         "/api/running-processes": {"ok": True, "running": ["codex:TT-104"], "working": ["codex:TT-104"]},
         "/api/terminal-providers": {"providers": ["claude", "codex"]},
         "/api/category-management": {"ok": True, "data": {"revision": "demo", "onboarded": True, "categories": CATEGORIES, "reviews": [], "scan": {"status": "idle", "finishedAt": ""}}},
-        "/api/agent-activity/TT-104": {"ok": True, "events": AGENT_EVENTS[:4] if stage == 3 else AGENT_EVENTS},
+        "/api/agent-activity/TT-104": {
+            "ok": True,
+            "events": AGENT_EVENTS[:4] if stage == 3 else AGENT_EVENTS,
+            "summary": AGENT_SUMMARY,
+        },
+        "/api/manager-summary/TT-104": {"ok": True, "brief": MANAGER_BRIEF},
         "/api/tickets/TT-104/change-requests/refresh": {"ok": True, "changeRequests": TICKETS["TT-104"]["changeRequests"]},
     }
     return f"""
@@ -206,6 +237,7 @@ def browser_fixture(stage: int) -> str:
     const path = cleanPath(input);
     let body = responses[path];
     if (path.startsWith('/api/agent-activity/')) body = responses['/api/agent-activity/TT-104'];
+    if (path.startsWith('/api/manager-summary/')) body = responses['/api/manager-summary/TT-104'];
     if (path.includes('/change-requests/refresh')) body = responses['/api/tickets/TT-104/change-requests/refresh'];
     if (body === undefined) body = {{ok: true}};
     return new Response(JSON.stringify(body), {{status: 200, headers: {{'Content-Type': 'application/json'}}}});
@@ -251,10 +283,14 @@ def browser_fixture(stage: int) -> str:
   style.textContent = `
     .capture-terminal {{ box-sizing:border-box; height:100%; margin:0; overflow:hidden; padding:18px;
       white-space:pre-wrap; color:#dce8ea; background:#0d1b24; font:500 14px/1.55 "IBM Plex Mono",monospace; }}
-    body[data-capture-caption]::after {{ content:attr(data-capture-caption); position:fixed; z-index:9999; left:50%; bottom:22px; transform:translateX(-50%);
+    .capture-caption {{ position:fixed; z-index:9999; left:50%; bottom:22px; transform:translateX(-50%);
       width:min(900px,calc(100vw - 56px)); box-sizing:border-box; padding:14px 22px; border:1px solid #ef9a72;
       border-radius:12px; color:#fff8ee; background:rgba(13,27,36,.94); box-shadow:0 12px 40px rgba(0,0,0,.38);
       font:700 19px/1.35 "Public Sans",sans-serif; text-align:center; }}
+    .capture-brand {{ position:fixed; z-index:9998; top:18px; left:20px;
+      padding:9px 13px; border:1px solid rgba(239,154,114,.72); border-radius:999px; color:#fff8ee;
+      background:rgba(13,27,36,.92); box-shadow:0 8px 24px rgba(0,0,0,.28);
+      font:700 12px/1 "IBM Plex Mono",monospace; letter-spacing:.08em; }}
     body.capture-focus .station-strip, body.capture-focus .titleblock, body.capture-focus #gettingStarted,
     body.capture-focus #categoryNotice, body.capture-focus #demoNotice, body.capture-focus #skillsSection,
     body.capture-focus .foot {{ display:none !important; }}
@@ -272,16 +308,32 @@ def browser_fixture(stage: int) -> str:
   function run() {{
     const row = document.querySelector('.ticketrow[data-ticket-key="TT-104"]');
     if (!row) return setTimeout(run, 50);
-    document.body.dataset.captureCaption = {json.dumps(CAPTIONS)}[stage];
-    if (stage === 0) return;
+    const brand = document.createElement('div');
+    brand.className = 'capture-brand';
+    brand.textContent = 'TICKET TERMINAL   ·   OPEN SOURCE   ·   RUNS LOCALLY';
+    document.body.appendChild(brand);
+    const caption = document.createElement('div');
+    caption.className = 'capture-caption';
+    caption.textContent = {json.dumps(CAPTIONS)}[stage];
+    document.body.appendChild(caption);
     document.body.classList.add('capture-focus');
+    if (stage === 0) return;
     row.querySelector('.rowtri').click();
-    if (stage >= 2) findButton(row, 'Open Codex').click();
-    if (stage >= 3) setTimeout(() => {{
-      const toggle = [...row.querySelectorAll('.agenttrail-toggle')].find(button => !button.hidden);
+    if (stage >= 2) {{
+      findButton(row, 'Open Codex').click();
+      setTimeout(() => {{
+        const terminal = row.querySelector('.capture-terminal');
+        if (terminal) terminal.textContent = terminalText;
+      }}, 160);
+    }}
+    if (stage === 3) setTimeout(() => {{
+      const toggle = [...row.querySelectorAll('.agenttrail-toggle')].find(button => !button.hidden && button.textContent.includes('Agent trail'));
       if (toggle) toggle.click();
-    }}, 180);
-    setTimeout(() => row.scrollIntoView({{block:'start'}}), 320);
+    }}, 260);
+    if (stage === 4) setTimeout(() => {{
+      const toggle = [...row.querySelectorAll('.managersummary-toggle')].find(button => !button.hidden);
+      if (toggle) toggle.click();
+    }}, 260);
   }}
   window.addEventListener('load', () => setTimeout(run, 100));
 }})();
