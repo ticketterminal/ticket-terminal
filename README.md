@@ -16,7 +16,7 @@ commands, and leave a permanent transcript behind. Underneath the board sits a *
 that you and your agents both read and write.
 
 <p align="center">
-  <img src="docs/assets/ticket-terminal-demo.gif" alt="Ticket Terminal walkthrough: a ticket opens an embedded Codex terminal and an agent trail showing commands, files, and shared memory used during the session" width="100%">
+  <img src="docs/assets/ticket-terminal-demo.gif" alt="Ticket Terminal walkthrough: a Jira ticket launches a local Codex session, preserves the agent trail, and produces a manager-ready brief" width="100%">
   <br><sub>Current app mechanics with safe sample data: open a ticket, launch its agent session, and inspect the agent trail.</sub>
 </p>
 

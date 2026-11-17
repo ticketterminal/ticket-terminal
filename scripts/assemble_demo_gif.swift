@@ -33,7 +33,9 @@ for (index, frame) in frames.enumerated() {
         exit(1)
     }
     _ = firstImage // Keep the first image alive while encoding on older ImageIO builds.
-    let delay = index == frames.count - 1 ? 7.0 : 6.0
+    // A concise proof loop: enough time to read each state without turning the
+    // README asset into a slow feature tour.
+    let delay = index == frames.count - 1 ? 6.0 : 4.5
     let properties: [CFString: Any] = [
         "{GIF}" as CFString: [
             "DelayTime" as CFString: delay,
