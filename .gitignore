@@ -27,3 +27,11 @@ tests/ui/node_modules/
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Private growth and outreach material — keep local, never publish.
+GROWTH.md
+CHANNEL_OUTREACH.md
+REDDIT_OUTREACH.md
+MULTICA_GROWTH_INTEL.md
+COURSE_CAMPAIGN.md
+REPO_ACQUISITION_PLAYBOOK.md
