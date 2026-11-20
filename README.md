@@ -10,7 +10,7 @@
 
 *Your ticket board, wired directly into the coding agents doing the work.*
 
-Ticket Terminal is a local ticket board where every ticket has a **real embedded terminal**: an
+Ticket Terminal is a Jira/Notion synced local ticket board where every ticket has a **real embedded terminal**: an
 actual `claude` or `codex` session, scoped to that ticket, that can pick up the work, run real
 commands, and leave a permanent transcript behind. Underneath the board sits a **shared memory**
 that you and your agents both read and write.
